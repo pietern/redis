@@ -1,4 +1,6 @@
-#include "redis.h"
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include <ctype.h>
 #include <limits.h>
 #include <math.h>
@@ -258,6 +260,22 @@ int string2ll(char *s, size_t slen, long long *value) {
     return 1;
 }
 
+/* Convert a string into a long. Returns 1 if the string could be parsed into a
+ * (non-overflowing) long, 0 otherwise. The value will be set to the parsed
+ * value when appropriate. */
+int string2l(char *s, size_t slen, long *lval) {
+    long long llval;
+
+    if (!string2ll(s,slen,&llval))
+        return 0;
+
+    if (llval < LONG_MIN || llval > LONG_MAX)
+        return 0;
+
+    *lval = (long)llval;
+    return 1;
+}
+
 /* Convert a double to a string representation. Returns the number of bytes
  * required. The representation should always be parsable by stdtod(3). */
 int d2string(char *buf, size_t len, double value) {
@@ -295,46 +313,4 @@ int d2string(char *buf, size_t len, double value) {
     }
 
     return len;
-}
-
-/* Check if the sds string 's' can be represented by a long long
- * (that is, is a number that fits into long without any other space or
- * character before or after the digits, so that converting this number
- * back to a string will result in the same bytes as the original string).
- *
- * If so, the function returns REDIS_OK and *llongval is set to the value
- * of the number. Otherwise REDIS_ERR is returned */
-int isStringRepresentableAsLongLong(sds s, long long *llongval) {
-    char buf[32], *endptr;
-    long long value;
-    int slen;
-
-    value = strtoll(s, &endptr, 10);
-    if (endptr[0] != '\0') return REDIS_ERR;
-    slen = ll2string(buf,32,value);
-
-    /* If the number converted back into a string is not identical
-     * then it's not possible to encode the string as integer */
-    if (sdslen(s) != (unsigned)slen || memcmp(buf,s,slen)) return REDIS_ERR;
-    if (llongval) *llongval = value;
-    return REDIS_OK;
-}
-
-int isStringRepresentableAsLong(sds s, long *longval) {
-    long long ll;
-
-    if (isStringRepresentableAsLongLong(s,&ll) == REDIS_ERR) return REDIS_ERR;
-    if (ll < LONG_MIN || ll > LONG_MAX) return REDIS_ERR;
-    *longval = (long)ll;
-    return REDIS_OK;
-}
-
-int isObjectRepresentableAsLongLong(robj *o, long long *llongval) {
-    redisAssert(o->type == REDIS_STRING);
-    if (o->encoding == REDIS_ENCODING_INT) {
-        if (llongval) *llongval = (long) o->ptr;
-        return REDIS_OK;
-    } else {
-        return isStringRepresentableAsLongLong(o->ptr,llongval);
-    }
 }
