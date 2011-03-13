@@ -280,6 +280,38 @@ typedef struct vmPointer {
     _var.ptr = _ptr; \
 } while(0);
 
+/* Literal value. Used for pulling literal values from different Redis
+ * collections. Since they may be encoded differently, the values they return
+ * can include Redis objects, string buffers or integer values.  This structure
+ * is used to encapsulate these different types on the stack, to avoid having
+ * to create a Redis object for every value to be able to work with it.
+ *
+ * When a literal is created from an integer value or string buffer and we need
+ * to use a Redis object, the literal is flagged as having a dirty Redis
+ * object. This means it needs to be released when done working with the
+ * literal.
+ *
+ * When an integer value is requested from a literal, it checks if we need to
+ * convert from a different representation. If this succeeds, the literal is
+ * flagged to have a valid integer value. Otherwise, it is flagged to *not*
+ * have a valid integer value so subsequent requests can abort early. */
+typedef struct redisLiteral {
+    int flags;
+    char _buf[24]; /* Private buffer. */
+    robj *obj;
+    char *bufstr;
+    int buflen;
+    long long ll;
+} rlit;
+
+/* The flag DIRTY_LL is used to mark that the literal already has been checked
+ * for having an integer value. When this check was successful, the flag
+ * VALID_LL is set to mark that the "ell" field actually contains a valid
+ * integer value. */
+#define REDIS_LIT_DIRTY_ROBJ 1
+#define REDIS_LIT_DIRTY_LL 2
+#define REDIS_LIT_VALID_LL 3
+
 typedef struct redisDb {
     dict *dict;                 /* The keyspace for this DB */
     dict *expires;              /* Timeout of keys with a timeout set */
@@ -748,6 +780,15 @@ char *strEncoding(int encoding);
 int compareStringObjects(robj *a, robj *b);
 int equalStringObjects(robj *a, robj *b);
 unsigned long estimateObjectIdleTime(robj *o);
+
+/* API for literal values. */
+rlit *litFromObject(rlit *lit, robj *obj);
+rlit *litFromBuffer(rlit *lit, char *bufstr, int buflen);
+rlit *litFromLongLong(rlit *lit, long long ll);
+robj *litGetObject(rlit *lit);
+int litGetLongLong(rlit *lit, long long *ll);
+int litGetBuffer(rlit *lit, char **buf);
+void litClear(rlit *lit);
 
 /* Synchronous I/O with timeout */
 int syncWrite(int fd, char *ptr, ssize_t size, int timeout);

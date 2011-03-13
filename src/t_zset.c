@@ -1111,28 +1111,6 @@ typedef struct {
     } iter;
 } zsetopsrc;
 
-
-/* Use dirty flags for pointers that need to be cleaned up in the next
- * iteration over the zsetopval. The dirty flag for the long long value is
- * special, since long long values don't need cleanup. Instead, it means that
- * we already checked that "ell" holds a long long, or tried to convert another
- * representation into a long long value. When this was successful,
- * OPVAL_VALID_LL is set as well. */
-#define OPVAL_DIRTY_ROBJ 1
-#define OPVAL_DIRTY_LL 2
-#define OPVAL_VALID_LL 4
-
-/* Store value retrieved from the iterator. */
-typedef struct {
-    int flags;
-    unsigned char _buf[32]; /* Private buffer. */
-    robj *ele;
-    unsigned char *estr;
-    unsigned int elen;
-    long long ell;
-    double score;
-} zsetopval;
-
 typedef union _iterset iterset;
 typedef union _iterzset iterzset;
 
@@ -1226,32 +1204,34 @@ int zuiLength(zsetopsrc *op) {
     }
 }
 
-/* Check if the current value is valid. If so, store it in the passed structure
+/* Check if the current position is valid. If so, store it in the passed literal
  * and move to the next element. If not valid, this means we have reached the
  * end of the structure and can abort. */
-int zuiNext(zsetopsrc *op, zsetopval *val) {
+int zuiNext(zsetopsrc *op, rlit *lit, double *score) {
     if (op->subject == NULL)
         return 0;
 
-    if (val->flags & OPVAL_DIRTY_ROBJ)
-        decrRefCount(val->ele);
-
-    bzero(val,sizeof(zsetopval));
-
+    litClear(lit);
     if (op->type == REDIS_SET) {
         iterset *it = &op->iter.set;
+
         if (op->encoding == REDIS_ENCODING_INTSET) {
-            if (!intsetGet(it->is.is,it->is.ii,&val->ell))
+            long long ll;
+
+            if (!intsetGet(it->is.is,it->is.ii,&ll))
                 return 0;
-            val->score = 1.0;
+
+            litFromLongLong(lit,ll);
+            if (score) *score = 1.0;
 
             /* Move to next element. */
             it->is.ii++;
         } else if (op->encoding == REDIS_ENCODING_HT) {
             if (it->ht.de == NULL)
                 return 0;
-            val->ele = dictGetEntryKey(it->ht.de);
-            val->score = 1.0;
+
+            litFromObject(lit,(robj*)dictGetEntryKey(it->ht.de));
+            if (score) *score = 1.0;
 
             /* Move to next element. */
             it->ht.de = dictNext(it->ht.di);
@@ -1260,20 +1240,32 @@ int zuiNext(zsetopsrc *op, zsetopval *val) {
         }
     } else if (op->type == REDIS_ZSET) {
         iterzset *it = &op->iter.zset;
+
         if (op->encoding == REDIS_ENCODING_ZIPLIST) {
+            unsigned char *str = NULL;
+            unsigned int len;
+            long long ll;
+
             /* No need to check both, but better be explicit. */
             if (it->zl.eptr == NULL || it->zl.sptr == NULL)
                 return 0;
-            redisAssert(ziplistGet(it->zl.eptr,&val->estr,&val->elen,&val->ell));
-            val->score = zzlGetScore(it->zl.sptr);
+
+            redisAssert(ziplistGet(it->zl.eptr,&str,&len,&ll));
+            if (str != NULL)
+                litFromBuffer(lit,(char*)str,(int)len);
+            else
+                litFromLongLong(lit,ll);
+
+            if (score) *score = zzlGetScore(it->zl.sptr);
 
             /* Move to next element. */
             zzlNext(it->zl.zl,&it->zl.eptr,&it->zl.sptr);
         } else if (op->encoding == REDIS_ENCODING_RAW) {
             if (it->sl.node == NULL)
                 return 0;
-            val->ele = it->sl.node->obj;
-            val->score = it->sl.node->score;
+
+            litFromObject(lit,it->sl.node->obj);
+            if (score) *score = it->sl.node->score;
 
             /* Move to next element. */
             it->sl.node = it->sl.node->level[0].forward;
@@ -1286,66 +1278,10 @@ int zuiNext(zsetopsrc *op, zsetopval *val) {
     return 1;
 }
 
-int zuiLongLongFromValue(zsetopval *val) {
-    if (!(val->flags & OPVAL_DIRTY_LL)) {
-        val->flags |= OPVAL_DIRTY_LL;
 
-        if (val->ele != NULL) {
-            if (val->ele->encoding == REDIS_ENCODING_INT) {
-                val->ell = (long)val->ele->ptr;
-                val->flags |= OPVAL_VALID_LL;
-            } else if (val->ele->encoding == REDIS_ENCODING_RAW) {
-                if (string2ll(val->ele->ptr,sdslen(val->ele->ptr),&val->ell))
-                    val->flags |= OPVAL_VALID_LL;
-            } else {
-                redisPanic("Unsupported element encoding");
-            }
-        } else if (val->estr != NULL) {
-            if (string2ll((char*)val->estr,val->elen,&val->ell))
-                val->flags |= OPVAL_VALID_LL;
-        } else {
-            /* The long long was already set, flag as valid. */
-            val->flags |= OPVAL_VALID_LL;
-        }
-    }
-    return val->flags & OPVAL_VALID_LL;
-}
-
-robj *zuiObjectFromValue(zsetopval *val) {
-    if (val->ele == NULL) {
-        if (val->estr != NULL) {
-            val->ele = createStringObject((char*)val->estr,val->elen);
-        } else {
-            val->ele = createStringObjectFromLongLong(val->ell);
-        }
-        val->flags |= OPVAL_DIRTY_ROBJ;
-    }
-    return val->ele;
-}
-
-int zuiBufferFromValue(zsetopval *val) {
-    if (val->estr == NULL) {
-        if (val->ele != NULL) {
-            if (val->ele->encoding == REDIS_ENCODING_INT) {
-                val->elen = ll2string((char*)val->_buf,sizeof(val->_buf),(long)val->ele->ptr);
-                val->estr = val->_buf;
-            } else if (val->ele->encoding == REDIS_ENCODING_RAW) {
-                val->elen = sdslen(val->ele->ptr);
-                val->estr = val->ele->ptr;
-            } else {
-                redisPanic("Unsupported element encoding");
-            }
-        } else {
-            val->elen = ll2string((char*)val->_buf,sizeof(val->_buf),val->ell);
-            val->estr = val->_buf;
-        }
-    }
-    return 1;
-}
-
-/* Find value pointed to by val in the source pointer to by op. When found,
+/* Find value pointed to by lit in the source pointer to by op. When found,
  * return 1 and store its score in target. Return 0 otherwise. */
-int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
+int zuiFind(zsetopsrc *op, rlit *lit, double *score) {
     if (op->subject == NULL)
         return 0;
 
@@ -1353,16 +1289,19 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
         iterset *it = &op->iter.set;
 
         if (op->encoding == REDIS_ENCODING_INTSET) {
-            if (zuiLongLongFromValue(val) && intsetFind(it->is.is,val->ell)) {
-                *score = 1.0;
+            long long ll;
+
+            if (litGetLongLong(lit,&ll) && intsetFind(it->is.is,ll)) {
+                if (score) *score = 1.0;
                 return 1;
             } else {
                 return 0;
             }
         } else if (op->encoding == REDIS_ENCODING_HT) {
-            zuiObjectFromValue(val);
-            if (dictFind(it->ht.dict,val->ele) != NULL) {
-                *score = 1.0;
+            robj *obj = litGetObject(lit);
+
+            if (dictFind(it->ht.dict,obj) != NULL) {
+                if (score) *score = 1.0;
                 return 1;
             } else {
                 return 0;
@@ -1372,10 +1311,10 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
         }
     } else if (op->type == REDIS_ZSET) {
         iterzset *it = &op->iter.zset;
-        zuiObjectFromValue(val);
+        robj *obj = litGetObject(lit);
 
         if (op->encoding == REDIS_ENCODING_ZIPLIST) {
-            if (zzlFind(it->zl.zl,val->ele,score) != NULL) {
+            if (zzlFind(it->zl.zl,obj,score) != NULL) {
                 /* Score is already set by zzlFind. */
                 return 1;
             } else {
@@ -1383,8 +1322,9 @@ int zuiFind(zsetopsrc *op, zsetopval *val, double *score) {
             }
         } else if (op->encoding == REDIS_ENCODING_RAW) {
             dictEntry *de;
-            if ((de = dictFind(it->sl.zs->dict,val->ele)) != NULL) {
-                *score = *(double*)dictGetEntryVal(de);
+
+            if ((de = dictFind(it->sl.zs->dict,obj)) != NULL) {
+                if (score) *score = *(double*)dictGetEntryVal(de);
                 return 1;
             } else {
                 return 0;
@@ -1427,11 +1367,9 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
     int i, j, setnum;
     int aggregate = REDIS_AGGR_SUM;
     zsetopsrc *src;
-    zsetopval zval;
-    robj *tmp;
-    unsigned int maxelelen = 0;
     robj *dstobj;
     zset *dstzset;
+    unsigned int maxelelen = 0;
     zskiplistNode *znode;
     int touched = 0;
 
@@ -1519,16 +1457,17 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
     dstzset = dstobj->ptr;
 
     if (op == REDIS_OP_INTER) {
+        double score, value;
+        rlit zlit;
+
         /* Skip everything if the smallest input is empty. */
         if (zuiLength(&src[0]) > 0) {
             /* Precondition: as src[0] is non-empty and the inputs are ordered
              * by size, all src[i > 0] are non-empty too. */
-            while (zuiNext(&src[0],&zval)) {
-                double score, value;
-
-                score = src[0].weight * zval.score;
+            while (zuiNext(&src[0],&zlit,&score)) {
+                score *= src[0].weight;
                 for (j = 1; j < setnum; j++) {
-                    if (zuiFind(&src[j],&zval,&value)) {
+                    if (zuiFind(&src[j],&zlit,&value)) {
                         value *= src[j].weight;
                         zunionInterAggregate(&score,value,aggregate);
                     } else {
@@ -1538,7 +1477,7 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
 
                 /* Only continue when present in every input. */
                 if (j == setnum) {
-                    tmp = zuiObjectFromValue(&zval);
+                    robj *tmp = litGetObject(&zlit);
                     znode = zslInsert(dstzset->zsl,score,tmp);
                     incrRefCount(tmp); /* added to skiplist */
                     dictAdd(dstzset->dict,tmp,&znode->score);
@@ -1551,34 +1490,35 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
             }
         }
     } else if (op == REDIS_OP_UNION) {
+        double score, value;
+        rlit zlit;
+
         for (i = 0; i < setnum; i++) {
             if (zuiLength(&src[0]) == 0)
                 continue;
 
-            while (zuiNext(&src[i],&zval)) {
-                double score, value;
-
+            while (zuiNext(&src[i],&zlit,&score)) {
                 /* Skip key when already processed */
-                if (dictFind(dstzset->dict,zuiObjectFromValue(&zval)) != NULL)
+                if (dictFind(dstzset->dict,litGetObject(&zlit)) != NULL)
                     continue;
 
                 /* Initialize score */
-                score = src[i].weight * zval.score;
+                score *= src[i].weight;
 
                 /* Because the inputs are sorted by size, it's only possible
                  * for sets at larger indices to hold this element. */
                 for (j = (i+1); j < setnum; j++) {
-                    if (zuiFind(&src[j],&zval,&value)) {
+                    if (zuiFind(&src[j],&zlit,&value)) {
                         value *= src[j].weight;
                         zunionInterAggregate(&score,value,aggregate);
                     }
                 }
 
-                tmp = zuiObjectFromValue(&zval);
+                robj *tmp = litGetObject(&zlit);
                 znode = zslInsert(dstzset->zsl,score,tmp);
-                incrRefCount(zval.ele); /* added to skiplist */
+                incrRefCount(tmp); /* added to skiplist */
                 dictAdd(dstzset->dict,tmp,&znode->score);
-                incrRefCount(zval.ele); /* added to dictionary */
+                incrRefCount(tmp); /* added to dictionary */
 
                 if (tmp->encoding == REDIS_ENCODING_RAW)
                     if (sdslen(tmp->ptr) > maxelelen)

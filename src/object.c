@@ -441,3 +441,96 @@ unsigned long estimateObjectIdleTime(robj *o) {
                     REDIS_LRU_CLOCK_RESOLUTION;
     }
 }
+
+rlit *litFromObject(rlit *lit, robj *obj) {
+    bzero(lit,sizeof(*lit));
+    lit->obj = obj;
+    return lit;
+}
+
+rlit *litFromBuffer(rlit *lit, char *bufstr, int buflen) {
+    bzero(lit,sizeof(*lit));
+    lit->bufstr = bufstr;
+    lit->buflen = buflen;
+    return lit;
+}
+
+rlit *litFromLongLong(rlit *lit, long long ll) {
+    bzero(lit,sizeof(*lit));
+    lit->ll = ll;
+    return lit;
+}
+
+robj *litGetObject(rlit *lit) {
+    if (lit->obj == NULL) {
+        lit->flags |= REDIS_LIT_DIRTY_ROBJ;
+
+        if (lit->bufstr != NULL)
+            lit->obj = createStringObject(lit->bufstr,lit->buflen);
+        else
+            lit->obj = createStringObjectFromLongLong(lit->ll);
+    }
+
+    return lit->obj;
+}
+
+int litGetLongLong(rlit *lit, long long *ll) {
+    if (!(lit->flags & REDIS_LIT_DIRTY_LL)) {
+        lit->flags |= REDIS_LIT_DIRTY_LL;
+
+        if (lit->obj != NULL) {
+            redisAssert(lit->obj->type == REDIS_STRING);
+            if (lit->obj->encoding == REDIS_ENCODING_INT) {
+                lit->ll = (long)lit->obj->ptr;
+                lit->flags |= REDIS_LIT_VALID_LL;
+            } else if (lit->obj->encoding == REDIS_ENCODING_RAW) {
+                if (string2ll(lit->obj->ptr,sdslen(lit->obj->ptr),&lit->ll))
+                    lit->flags |= REDIS_LIT_VALID_LL;
+            } else {
+                redisPanic("Unknown string encoding");
+            }
+        } else if (lit->bufstr != NULL) {
+            if (string2ll(lit->bufstr,lit->buflen,&lit->ll))
+                lit->flags |= REDIS_LIT_VALID_LL;
+        } else {
+            /* The long long was already set, flag as valid. */
+            lit->flags |= REDIS_LIT_VALID_LL;
+        }
+    }
+
+    if (lit->flags & REDIS_LIT_VALID_LL) {
+        if (ll) *ll = lit->ll;
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+int litGetBuffer(rlit *lit, char **buf) {
+    if (lit->bufstr == NULL) {
+        if (lit->obj != NULL) {
+            redisAssert(lit->obj->type == REDIS_STRING);
+            if (lit->obj->encoding == REDIS_ENCODING_INT) {
+                lit->buflen = ll2string(lit->_buf,sizeof(lit->_buf),(long)lit->obj->ptr);
+                lit->bufstr = lit->_buf;
+            } else if (lit->obj->encoding == REDIS_ENCODING_RAW) {
+                lit->buflen = sdslen(lit->obj->ptr);
+                lit->bufstr = lit->obj->ptr;
+            } else {
+                redisPanic("Unknown string encoding");
+            }
+        } else {
+            lit->buflen = ll2string(lit->_buf,sizeof(lit->_buf),lit->ll);
+            lit->bufstr = lit->_buf;
+        }
+    }
+
+    if (buf) *buf = lit->bufstr;
+    return lit->buflen;
+}
+
+void litClear(rlit *lit) {
+    if (lit->flags & REDIS_LIT_DIRTY_ROBJ)
+        decrRefCount(lit->obj);
+    bzero(lit,sizeof(*lit));
+}
