@@ -187,6 +187,22 @@ unsigned int tsetSize(robj *sobj) {
     return 0; /* Avoid warnings. */
 }
 
+int tsetFindLiteral(robj *sobj, rlit *elelit) {
+    robj *eleobj;
+    long long llval;
+
+    if (sobj->encoding == REDIS_ENCODING_INTSET) {
+        return litGetLongLong(elelit,&llval) && intsetFind(sobj->ptr,llval);
+    } else if (sobj->encoding == REDIS_ENCODING_HT) {
+        eleobj = litGetObject(elelit);
+        return dictFind(sobj->ptr,eleobj) != NULL;
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
 void tsetInitIterator(iterset *it, robj *sobj) {
     redisAssert(sobj->type == REDIS_SET);
     it->encoding = sobj->encoding;
@@ -221,20 +237,6 @@ int tsetNext(iterset *it, rlit *ele) {
     }
 
     return 1;
-}
-
-int tsetFind(iterset *it, rlit *ele) {
-    if (it->encoding == REDIS_ENCODING_INTSET) {
-        long long ll;
-        return litGetLongLong(ele,&ll) && intsetFind(it->iter.is.is,ll);
-    } else if (it->encoding == REDIS_ENCODING_HT) {
-        robj *obj = litGetObject(ele);
-        return dictFind(it->iter.ht.dict,obj) != NULL;
-    } else {
-        redisPanic("Unknown set encoding");
-    }
-
-    return 0; /* Avoid warnings. */
 }
 
 void tsetClearIterator(iterset *it) {

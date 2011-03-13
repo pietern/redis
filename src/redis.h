@@ -631,9 +631,9 @@ typedef struct _iterset {
 } iterset;
 
 unsigned int tsetSize(robj *sobj);
+int tsetFindLiteral(robj *sobj, rlit *ele);
 void tsetInitIterator(iterset *it, robj *sobj);
 int tsetNext(iterset *it, rlit *ele);
-int tsetFind(iterset *it, rlit *ele);
 void tsetClearIterator(iterset *it);
 
 /* Sorted set iterator. */
@@ -654,9 +654,9 @@ typedef struct _iterzset {
 } iterzset;
 
 unsigned int tzsetLength(robj *zobj);
+int tzsetFindLiteral(robj *zobj, rlit *ele, double *score);
 void tzsetInitIterator(iterzset *it, robj *zobj);
 int tzsetNext(iterzset *it, rlit *ele, double *score);
-int tzsetFind(iterzset *it, rlit *ele, double *score);
 void tzsetClearIterator(iterzset *it);
 
 /* Hash iterator. */

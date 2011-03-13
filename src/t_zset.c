@@ -822,6 +822,30 @@ unsigned int tzsetLength(robj *zobj) {
     return 0; /* Avoid warnings. */
 }
 
+int tzsetFindLiteral(robj *zobj, rlit *ele, double *score) {
+    robj *obj = litGetObject(ele);
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        if (zzlFind(zobj->ptr,obj,score) != NULL) {
+            /* Score is already set by zzlFind. */
+            return 1;
+        } else {
+            return 0;
+        }
+    } else if (zobj->encoding == REDIS_ENCODING_RAW) {
+        dictEntry *de;
+        if ((de = dictFind(((zset*)zobj->ptr)->dict,obj)) != NULL) {
+            if (score) *score = *(double*)dictGetEntryVal(de);
+            return 1;
+        } else {
+            return 0;
+        }
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
 void tzsetInitIterator(iterzset *it, robj *zobj) {
     redisAssert(zobj->type == REDIS_ZSET);
     it->encoding = zobj->encoding;
@@ -874,30 +898,6 @@ int tzsetNext(iterzset *it, rlit *ele, double *score) {
     }
 
     return 1;
-}
-
-int tzsetFind(iterzset *it, rlit *ele, double *score) {
-    robj *obj = litGetObject(ele);
-    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
-        if (zzlFind(it->iter.zl.zl,obj,score) != NULL) {
-            /* Score is already set by zzlFind. */
-            return 1;
-        } else {
-            return 0;
-        }
-    } else if (it->encoding == REDIS_ENCODING_RAW) {
-        dictEntry *de;
-        if ((de = dictFind(it->iter.sl.zs->dict,obj)) != NULL) {
-            if (score) *score = *(double*)dictGetEntryVal(de);
-            return 1;
-        } else {
-            return 0;
-        }
-    } else {
-        redisPanic("Unknown sorted set encoding");
-    }
-
-    return 0; /* Avoid warnings. */
 }
 
 void tzsetClearIterator(iterzset *it) {
@@ -1249,12 +1249,12 @@ int zuiFind(zsetopsrc *op, rlit *lit, double *score) {
         return 0;
 
     if (op->type == REDIS_SET) {
-        if (tsetFind(&op->iter.set,lit)) {
+        if (tsetFindLiteral(op->subject,lit)) {
             if (score) *score = 1.0;
             return 1;
         }
     } else if (op->type == REDIS_ZSET) {
-        if (tzsetFind(&op->iter.zset,lit,score)) {
+        if (tzsetFindLiteral(op->subject,lit,score)) {
             return 1;
         }
     } else {
