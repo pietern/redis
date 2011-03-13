@@ -13,165 +13,93 @@ robj *setTypeCreate(robj *value) {
     return createSetObject();
 }
 
-int setTypeAdd(robj *subject, robj *value) {
+int tsetAddLiteral(robj *sobj, rlit *elelit) {
+    robj *eleobj;
     long long llval;
-    if (subject->encoding == REDIS_ENCODING_HT) {
-        if (dictAdd(subject->ptr,value,NULL) == DICT_OK) {
-            incrRefCount(value);
-            return 1;
-        }
-    } else if (subject->encoding == REDIS_ENCODING_INTSET) {
-        if (isObjectRepresentableAsLongLong(value,&llval) == REDIS_OK) {
-            uint8_t success = 0;
-            subject->ptr = intsetAdd(subject->ptr,llval,&success);
+    uint8_t success = 0;
+
+    if (sobj->encoding == REDIS_ENCODING_INTSET) {
+        if (litGetLongLong(elelit,&llval)) {
+            sobj->ptr = intsetAdd(sobj->ptr,llval,&success);
             if (success) {
-                /* Convert to regular set when the intset contains
-                 * too many entries. */
-                if (intsetLen(subject->ptr) > server.set_max_intset_entries)
-                    tsetConvert(subject,REDIS_ENCODING_HT);
+                /* Convert when it contains too many entries. */
+                if (intsetLen(sobj->ptr) > server.set_max_intset_entries)
+                    tsetConvert(sobj,REDIS_ENCODING_HT);
                 return 1;
             }
         } else {
             /* Failed to get integer from object, convert to regular set. */
-            tsetConvert(subject,REDIS_ENCODING_HT);
+            tsetConvert(sobj,REDIS_ENCODING_HT);
 
             /* The set *was* an intset and this value is not integer
              * encodable, so dictAdd should always work. */
-            redisAssert(dictAdd(subject->ptr,value,NULL) == DICT_OK);
-            incrRefCount(value);
+            eleobj = litGetObject(elelit);
+            redisAssert(dictAdd(sobj->ptr,eleobj,NULL) == DICT_OK);
+            incrRefCount(eleobj);
+            return 1;
+        }
+    } else if (sobj->encoding == REDIS_ENCODING_HT) {
+        eleobj = litGetObject(elelit);
+        if (dictAdd(sobj->ptr,eleobj,NULL) == DICT_OK) {
+            incrRefCount(eleobj);
             return 1;
         }
     } else {
         redisPanic("Unknown set encoding");
     }
+
     return 0;
 }
 
-int setTypeRemove(robj *setobj, robj *value) {
+int tsetAddObject(robj *sobj, robj *eleobj) {
+    rlit elelit;
+    litFromObject(&elelit,eleobj);
+
+    /* No need to clear dirty literal since it is created from an object. */
+    return tsetAddLiteral(sobj,&elelit);
+}
+
+int tsetRemoveLiteral(robj *sobj, rlit *elelit) {
+    robj *eleobj;
     long long llval;
-    if (setobj->encoding == REDIS_ENCODING_HT) {
-        if (dictDelete(setobj->ptr,value) == DICT_OK) {
-            if (htNeedsResize(setobj->ptr)) dictResize(setobj->ptr);
-            return 1;
-        }
-    } else if (setobj->encoding == REDIS_ENCODING_INTSET) {
-        if (isObjectRepresentableAsLongLong(value,&llval) == REDIS_OK) {
-            int success;
-            setobj->ptr = intsetRemove(setobj->ptr,llval,&success);
+    int success = 0;
+
+    if (sobj->encoding == REDIS_ENCODING_INTSET) {
+        /* Only integer values can be removed from an intset. */
+        if (litGetLongLong(elelit,&llval)) {
+            sobj->ptr = intsetRemove(sobj->ptr,llval,&success);
             if (success) return 1;
         }
-    } else {
-        redisPanic("Unknown set encoding");
-    }
-    return 0;
-}
-
-int setTypeIsMember(robj *subject, robj *value) {
-    long long llval;
-    if (subject->encoding == REDIS_ENCODING_HT) {
-        return dictFind((dict*)subject->ptr,value) != NULL;
-    } else if (subject->encoding == REDIS_ENCODING_INTSET) {
-        if (isObjectRepresentableAsLongLong(value,&llval) == REDIS_OK) {
-            return intsetFind((intset*)subject->ptr,llval);
+    } else if (sobj->encoding == REDIS_ENCODING_HT) {
+        eleobj = litGetObject(elelit);
+        if (dictDelete(sobj->ptr,eleobj) == DICT_OK) {
+            if (htNeedsResize(sobj->ptr)) dictResize(sobj->ptr);
+            return 1;
         }
     } else {
         redisPanic("Unknown set encoding");
     }
+
     return 0;
 }
 
-setTypeIterator *setTypeInitIterator(robj *subject) {
-    setTypeIterator *si = zmalloc(sizeof(setTypeIterator));
-    si->subject = subject;
-    si->encoding = subject->encoding;
-    if (si->encoding == REDIS_ENCODING_HT) {
-        si->di = dictGetIterator(subject->ptr);
-    } else if (si->encoding == REDIS_ENCODING_INTSET) {
-        si->ii = 0;
+int tsetRemoveObject(robj *sobj, robj *eleobj) {
+    rlit elelit;
+    litFromObject(&elelit,eleobj);
+
+    /* No need to clear dirty literal since it is created from an object. */
+    return tsetRemoveLiteral(sobj,&elelit);
+}
+
+void tsetRandomElement(robj *sobj, rlit *lit) {
+    if (sobj->encoding == REDIS_ENCODING_INTSET) {
+        litFromLongLong(lit,intsetRandom(sobj->ptr));
+    } else if (sobj->encoding == REDIS_ENCODING_HT) {
+        dictEntry *de = dictGetRandomKey(sobj->ptr);
+        litFromObject(lit,dictGetEntryKey(de));
     } else {
         redisPanic("Unknown set encoding");
     }
-    return si;
-}
-
-void setTypeReleaseIterator(setTypeIterator *si) {
-    if (si->encoding == REDIS_ENCODING_HT)
-        dictReleaseIterator(si->di);
-    zfree(si);
-}
-
-/* Move to the next entry in the set. Returns the object at the current
- * position.
- *
- * Since set elements can be internally be stored as redis objects or
- * simple arrays of integers, setTypeNext returns the encoding of the
- * set object you are iterating, and will populate the appropriate pointer
- * (eobj) or (llobj) accordingly.
- *
- * When there are no longer elements -1 is returned.
- * Returned objects ref count is not incremented, so this function is
- * copy on write friendly. */
-int setTypeNext(setTypeIterator *si, robj **objele, int64_t *llele) {
-    if (si->encoding == REDIS_ENCODING_HT) {
-        dictEntry *de = dictNext(si->di);
-        if (de == NULL) return -1;
-        *objele = dictGetEntryKey(de);
-    } else if (si->encoding == REDIS_ENCODING_INTSET) {
-        if (!intsetGet(si->subject->ptr,si->ii++,llele))
-            return -1;
-    }
-    return si->encoding;
-}
-
-/* The not copy on write friendly version but easy to use version
- * of setTypeNext() is setTypeNextObject(), returning new objects
- * or incrementing the ref count of returned objects. So if you don't
- * retain a pointer to this object you should call decrRefCount() against it.
- *
- * This function is the way to go for write operations where COW is not
- * an issue as the result will be anyway of incrementing the ref count. */
-robj *setTypeNextObject(setTypeIterator *si) {
-    int64_t intele;
-    robj *objele;
-    int encoding;
-
-    encoding = setTypeNext(si,&objele,&intele);
-    switch(encoding) {
-        case -1:    return NULL;
-        case REDIS_ENCODING_INTSET:
-            return createStringObjectFromLongLong(intele);
-        case REDIS_ENCODING_HT:
-            incrRefCount(objele);
-            return objele;
-        default:
-            redisPanic("Unsupported encoding");
-    }
-    return NULL; /* just to suppress warnings */
-}
-
-/* Return random element from a non empty set.
- * The returned element can be a int64_t value if the set is encoded
- * as an "intset" blob of integers, or a redis object if the set
- * is a regular set.
- *
- * The caller provides both pointers to be populated with the right
- * object. The return value of the function is the object->encoding
- * field of the object and is used by the caller to check if the
- * int64_t pointer or the redis object pointere was populated.
- *
- * When an object is returned (the set was a real set) the ref count
- * of the object is not incremented so this function can be considered
- * copy on write friendly. */
-int setTypeRandomElement(robj *setobj, robj **objele, int64_t *llele) {
-    if (setobj->encoding == REDIS_ENCODING_HT) {
-        dictEntry *de = dictGetRandomKey(setobj->ptr);
-        *objele = dictGetEntryKey(de);
-    } else if (setobj->encoding == REDIS_ENCODING_INTSET) {
-        *llele = intsetRandom(setobj->ptr);
-    } else {
-        redisPanic("Unknown set encoding");
-    }
-    return setobj->encoding;
 }
 
 unsigned int tsetSize(robj *sobj) {
@@ -201,6 +129,14 @@ int tsetFindLiteral(robj *sobj, rlit *elelit) {
     }
 
     return 0; /* Avoid warnings. */
+}
+
+int tsetFindObject(robj *sobj, robj *eleobj) {
+    rlit elelit;
+    litFromObject(&elelit,eleobj);
+
+    /* No need to clear dirty literal since it is created from an object. */
+    return tsetFindLiteral(sobj,&elelit);
 }
 
 void tsetInitIterator(iterset *it, robj *sobj) {
@@ -301,7 +237,7 @@ void saddCommand(redisClient *c) {
             return;
         }
     }
-    if (setTypeAdd(set,c->argv[2])) {
+    if (tsetAddObject(set,c->argv[2])) {
         signalModifiedKey(c->db,c->argv[1]);
         server.dirty++;
         addReply(c,shared.cone);
@@ -317,7 +253,7 @@ void sremCommand(redisClient *c) {
         checkType(c,set,REDIS_SET)) return;
 
     c->argv[2] = tryObjectEncoding(c->argv[2]);
-    if (setTypeRemove(set,c->argv[2])) {
+    if (tsetRemoveObject(set,c->argv[2])) {
         if (tsetSize(set) == 0) dbDelete(c->db,c->argv[1]);
         signalModifiedKey(c->db,c->argv[1]);
         server.dirty++;
@@ -351,7 +287,7 @@ void smoveCommand(redisClient *c) {
     }
 
     /* If the element cannot be removed from the src set, return 0. */
-    if (!setTypeRemove(srcset,ele)) {
+    if (!tsetRemoveObject(srcset,ele)) {
         addReply(c,shared.czero);
         return;
     }
@@ -369,7 +305,7 @@ void smoveCommand(redisClient *c) {
     }
 
     /* An extra key has changed when ele was successfully added to dstset */
-    if (setTypeAdd(dstset,ele)) server.dirty++;
+    if (tsetAddObject(dstset,ele)) server.dirty++;
     addReply(c,shared.cone);
 }
 
@@ -379,8 +315,7 @@ void sismemberCommand(redisClient *c) {
     if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,set,REDIS_SET)) return;
 
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
-    if (setTypeIsMember(set,c->argv[2]))
+    if (tsetFindObject(set,c->argv[2]))
         addReply(c,shared.cone);
     else
         addReply(c,shared.czero);
@@ -396,21 +331,25 @@ void scardCommand(redisClient *c) {
 }
 
 void spopCommand(redisClient *c) {
-    robj *set, *ele;
-    int64_t llele;
-    int encoding;
+    robj *key = c->argv[1];
+    robj *sobj;
+    robj *eleobj;
+    rlit elelit;
 
-    if ((set = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
-        checkType(c,set,REDIS_SET)) return;
+    if ((sobj = lookupKeyWriteOrReply(c,key,shared.nullbulk)) == NULL ||
+        checkType(c,sobj,REDIS_SET)) return;
 
-    encoding = setTypeRandomElement(set,&ele,&llele);
-    if (encoding == REDIS_ENCODING_INTSET) {
-        ele = createStringObjectFromLongLong(llele);
-        set->ptr = intsetRemove(set->ptr,llele,NULL);
-    } else {
-        incrRefCount(ele);
-        setTypeRemove(set,ele);
-    }
+    tsetRandomElement(sobj,&elelit);
+    eleobj = litGetObject(&elelit);
+
+    /* When the literal is created from an actual object, it might be destroyed
+     * when removing it from the set (since the dictionary does decrRefCount on
+     * removed elements). We need it later on, so protect it with a refcount. */
+    incrRefCount(eleobj);
+    redisAssert(tsetRemoveLiteral(sobj,&elelit));
+
+    /* We own a reference, so the literal can be cleared. */
+    litClearDirtyObject(&elelit);
 
     /* Change argv to replicate as SREM */
     c->argc = 3;
@@ -421,28 +360,24 @@ void spopCommand(redisClient *c) {
     memcpy(c->argv[0]->ptr, "SREM", 4);
 
     /* Popped element already has incremented refcount */
-    c->argv[2] = ele;
+    c->argv[2] = eleobj;
 
-    addReplyBulk(c,ele);
-    if (tsetSize(set) == 0) dbDelete(c->db,c->argv[1]);
+    addReplyBulk(c,eleobj);
+    if (tsetSize(sobj) == 0) dbDelete(c->db,c->argv[1]);
     signalModifiedKey(c->db,c->argv[1]);
     server.dirty++;
 }
 
 void srandmemberCommand(redisClient *c) {
-    robj *set, *ele;
-    int64_t llele;
-    int encoding;
+    robj *key = c->argv[1];
+    robj *sobj;
+    rlit elelit;
 
-    if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
-        checkType(c,set,REDIS_SET)) return;
+    if ((sobj = lookupKeyReadOrReply(c,key,shared.nullbulk)) == NULL ||
+        checkType(c,sobj,REDIS_SET)) return;
 
-    encoding = setTypeRandomElement(set,&ele,&llele);
-    if (encoding == REDIS_ENCODING_INTSET) {
-        addReplyBulkLongLong(c,llele);
-    } else {
-        addReplyBulk(c,ele);
-    }
+    tsetRandomElement(sobj,&elelit);
+    addReplyBulkLiteral(c,&elelit);
 }
 
 int qsortCompareSetsByCardinality(const void *s1, const void *s2) {
@@ -451,12 +386,11 @@ int qsortCompareSetsByCardinality(const void *s1, const void *s2) {
 
 void sinterGenericCommand(redisClient *c, robj **setkeys, unsigned long setnum, robj *dstkey) {
     robj **sets = zmalloc(sizeof(robj*)*setnum);
-    setTypeIterator *si;
-    robj *eleobj, *dstset = NULL;
-    int64_t intobj;
+    robj *dstset = NULL;
+    iterset it;
+    rlit ele;
     void *replylen = NULL;
     unsigned long j, cardinality = 0;
-    int encoding;
 
     for (j = 0; j < setnum; j++) {
         robj *setobj = dstkey ?
@@ -501,63 +435,27 @@ void sinterGenericCommand(redisClient *c, robj **setkeys, unsigned long setnum, 
     /* Iterate all the elements of the first (smallest) set, and test
      * the element against all the other sets, if at least one set does
      * not include the element it is discarded */
-    si = setTypeInitIterator(sets[0]);
-    while((encoding = setTypeNext(si,&eleobj,&intobj)) != -1) {
+    tsetInitIterator(&it,sets[0]);
+    while (tsetNext(&it,&ele)) {
         for (j = 1; j < setnum; j++) {
-            if (encoding == REDIS_ENCODING_INTSET) {
-                /* intset with intset is simple... and fast */
-                if (sets[j]->encoding == REDIS_ENCODING_INTSET &&
-                    !intsetFind((intset*)sets[j]->ptr,intobj))
-                {
-                    break;
-                /* in order to compare an integer with an object we
-                 * have to use the generic function, creating an object
-                 * for this */
-                } else if (sets[j]->encoding == REDIS_ENCODING_HT) {
-                    eleobj = createStringObjectFromLongLong(intobj);
-                    if (!setTypeIsMember(sets[j],eleobj)) {
-                        decrRefCount(eleobj);
-                        break;
-                    }
-                    decrRefCount(eleobj);
-                }
-            } else if (encoding == REDIS_ENCODING_HT) {
-                /* Optimization... if the source object is integer
-                 * encoded AND the target set is an intset, we can get
-                 * a much faster path. */
-                if (eleobj->encoding == REDIS_ENCODING_INT &&
-                    sets[j]->encoding == REDIS_ENCODING_INTSET &&
-                    !intsetFind((intset*)sets[j]->ptr,(long)eleobj->ptr))
-                {
-                    break;
-                /* else... object to object check is easy as we use the
-                 * type agnostic API here. */
-                } else if (!setTypeIsMember(sets[j],eleobj)) {
-                    break;
-                }
+            if (!tsetFindLiteral(sets[j],&ele))
+                break;
+        }
+
+        /* Add element to reply or dst set when present in all sets. */
+        if (j == setnum) {
+            if (!dstkey) {
+                addReplyBulkLiteral(c,&ele);
+                cardinality++;
+            } else {
+                tsetAddLiteral(dstset,&ele);
             }
         }
 
-        /* Only take action when all sets contain the member */
-        if (j == setnum) {
-            if (!dstkey) {
-                if (encoding == REDIS_ENCODING_HT)
-                    addReplyBulk(c,eleobj);
-                else
-                    addReplyBulkLongLong(c,intobj);
-                cardinality++;
-            } else {
-                if (encoding == REDIS_ENCODING_INTSET) {
-                    eleobj = createStringObjectFromLongLong(intobj);
-                    setTypeAdd(dstset,eleobj);
-                    decrRefCount(eleobj);
-                } else {
-                    setTypeAdd(dstset,eleobj);
-                }
-            }
-        }
+        /* Clean up object if it was created in the mean time. */
+        litClearDirtyObject(&ele);
     }
-    setTypeReleaseIterator(si);
+    tsetClearIterator(&it);
 
     if (dstkey) {
         /* Store the resulting set into the target, if the intersection
@@ -592,8 +490,9 @@ void sinterstoreCommand(redisClient *c) {
 
 void sunionDiffGenericCommand(redisClient *c, robj **setkeys, int setnum, robj *dstkey, int op) {
     robj **sets = zmalloc(sizeof(robj*)*setnum);
-    setTypeIterator *si;
-    robj *ele, *dstset = NULL;
+    robj *dstset = NULL;
+    iterset it;
+    rlit ele;
     int j, cardinality = 0;
 
     for (j = 0; j < setnum; j++) {
@@ -622,20 +521,22 @@ void sunionDiffGenericCommand(redisClient *c, robj **setkeys, int setnum, robj *
         if (op == REDIS_OP_DIFF && j == 0 && !sets[j]) break; /* result set is empty */
         if (!sets[j]) continue; /* non existing keys are like empty sets */
 
-        si = setTypeInitIterator(sets[j]);
-        while((ele = setTypeNextObject(si)) != NULL) {
+        tsetInitIterator(&it,sets[j]);
+        while (tsetNext(&it,&ele)) {
             if (op == REDIS_OP_UNION || j == 0) {
-                if (setTypeAdd(dstset,ele)) {
+                if (tsetAddLiteral(dstset,&ele))
                     cardinality++;
-                }
             } else if (op == REDIS_OP_DIFF) {
-                if (setTypeRemove(dstset,ele)) {
+                if (tsetRemoveLiteral(dstset,&ele))
                     cardinality--;
-                }
+            } else {
+                redisPanic("Unknown set op");
             }
-            decrRefCount(ele);
+
+            /* Clean up object if it was created in the mean time. */
+            litClearDirtyObject(&ele);
         }
-        setTypeReleaseIterator(si);
+        tsetClearIterator(&it);
 
         /* Exit when result set is empty. */
         if (op == REDIS_OP_DIFF && cardinality == 0) break;
@@ -643,13 +544,11 @@ void sunionDiffGenericCommand(redisClient *c, robj **setkeys, int setnum, robj *
 
     /* Output the content of the resulting set, if not in STORE mode */
     if (!dstkey) {
+        tsetInitIterator(&it,dstset);
         addReplyMultiBulkLen(c,cardinality);
-        si = setTypeInitIterator(dstset);
-        while((ele = setTypeNextObject(si)) != NULL) {
-            addReplyBulk(c,ele);
-            decrRefCount(ele);
-        }
-        setTypeReleaseIterator(si);
+        while (tsetNext(&it,&ele))
+            addReplyBulkLiteral(c,&ele);
+        tsetClearIterator(&it);
         decrRefCount(dstset);
     } else {
         /* If we have a target key where to store the resulting set
