@@ -630,7 +630,7 @@ typedef struct _iterset {
     } iter;
 } iterset;
 
-unsigned int tsetLength(robj *sobj);
+unsigned int tsetSize(robj *sobj);
 void tsetInitIterator(iterset *it, robj *sobj);
 int tsetNext(iterset *it, rlit *ele);
 int tsetFind(iterset *it, rlit *ele);
@@ -964,8 +964,7 @@ void setTypeReleaseIterator(setTypeIterator *si);
 int setTypeNext(setTypeIterator *si, robj **objele, int64_t *llele);
 robj *setTypeNextObject(setTypeIterator *si);
 int setTypeRandomElement(robj *setobj, robj **objele, int64_t *llele);
-unsigned long setTypeSize(robj *subject);
-void setTypeConvert(robj *subject, int enc);
+void tsetConvert(robj *sobj, int encoding);
 
 /* Hash data type */
 void convertToRealHash(robj *o);

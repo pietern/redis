@@ -1214,7 +1214,7 @@ int zuiLength(zsetopsrc *op) {
         return 0;
 
     if (op->type == REDIS_SET) {
-        return tsetLength(op->subject);
+        return tsetSize(op->subject);
     } else if (op->type == REDIS_ZSET) {
         return tzsetLength(op->subject);
     } else {

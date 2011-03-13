@@ -28,12 +28,12 @@ int setTypeAdd(robj *subject, robj *value) {
                 /* Convert to regular set when the intset contains
                  * too many entries. */
                 if (intsetLen(subject->ptr) > server.set_max_intset_entries)
-                    setTypeConvert(subject,REDIS_ENCODING_HT);
+                    tsetConvert(subject,REDIS_ENCODING_HT);
                 return 1;
             }
         } else {
             /* Failed to get integer from object, convert to regular set. */
-            setTypeConvert(subject,REDIS_ENCODING_HT);
+            tsetConvert(subject,REDIS_ENCODING_HT);
 
             /* The set *was* an intset and this value is not integer
              * encodable, so dictAdd should always work. */
@@ -174,49 +174,7 @@ int setTypeRandomElement(robj *setobj, robj **objele, int64_t *llele) {
     return setobj->encoding;
 }
 
-unsigned long setTypeSize(robj *subject) {
-    if (subject->encoding == REDIS_ENCODING_HT) {
-        return dictSize((dict*)subject->ptr);
-    } else if (subject->encoding == REDIS_ENCODING_INTSET) {
-        return intsetLen((intset*)subject->ptr);
-    } else {
-        redisPanic("Unknown set encoding");
-    }
-}
-
-/* Convert the set to specified encoding. The resulting dict (when converting
- * to a hashtable) is presized to hold the number of elements in the original
- * set. */
-void setTypeConvert(robj *setobj, int enc) {
-    setTypeIterator *si;
-    redisAssert(setobj->type == REDIS_SET &&
-                setobj->encoding == REDIS_ENCODING_INTSET);
-
-    if (enc == REDIS_ENCODING_HT) {
-        int64_t intele;
-        dict *d = dictCreate(&setDictType,NULL);
-        robj *element;
-
-        /* Presize the dict to avoid rehashing */
-        dictExpand(d,intsetLen(setobj->ptr));
-
-        /* To add the elements we extract integers and create redis objects */
-        si = setTypeInitIterator(setobj);
-        while (setTypeNext(si,NULL,&intele) != -1) {
-            element = createStringObjectFromLongLong(intele);
-            redisAssert(dictAdd(d,element,NULL) == DICT_OK);
-        }
-        setTypeReleaseIterator(si);
-
-        setobj->encoding = REDIS_ENCODING_HT;
-        zfree(setobj->ptr);
-        setobj->ptr = d;
-    } else {
-        redisPanic("Unsupported set conversion");
-    }
-}
-
-unsigned int tsetLength(robj *sobj) {
+unsigned int tsetSize(robj *sobj) {
     redisAssert(sobj->type == REDIS_SET);
     if (sobj->encoding == REDIS_ENCODING_INTSET) {
         return intsetLen(sobj->ptr);
@@ -289,6 +247,44 @@ void tsetClearIterator(iterset *it) {
     }
 }
 
+/* Convert set to specified encoding. When converting to a hash table, the dict
+ * is presized to hold the number of elements in the original set. */
+void tsetConvert(robj *sobj, int encoding) {
+    redisAssert(sobj->type == REDIS_SET);
+    if (sobj->encoding == REDIS_ENCODING_INTSET) {
+        iterset it;
+        rlit ele;
+        dict *dict = dictCreate(&setDictType,NULL);
+
+        if (encoding != REDIS_ENCODING_HT)
+            redisPanic("Unknown target encoding");
+
+        /* Presize the dict to avoid rehashing */
+        dictExpand(dict,intsetLen(sobj->ptr));
+
+        tsetInitIterator(&it,sobj);
+        while (tsetNext(&it,&ele)) {
+            robj *tmp = litGetObject(&ele);
+            incrRefCount(tmp);
+            redisAssert(dictAdd(dict,tmp,NULL) == DICT_OK);
+            litClearDirtyObject(&ele);
+        }
+        tsetClearIterator(&it);
+
+        zfree(sobj->ptr);
+        sobj->encoding = REDIS_ENCODING_HT;
+        sobj->ptr = dict;
+    } else if (sobj->encoding == REDIS_ENCODING_HT) {
+        redisPanic("Unsupported set conversion");
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+}
+
+/*-----------------------------------------------------------------------------
+ * Set Commands
+ *----------------------------------------------------------------------------*/
+
 void saddCommand(redisClient *c) {
     robj *set;
 
@@ -320,7 +316,7 @@ void sremCommand(redisClient *c) {
 
     c->argv[2] = tryObjectEncoding(c->argv[2]);
     if (setTypeRemove(set,c->argv[2])) {
-        if (setTypeSize(set) == 0) dbDelete(c->db,c->argv[1]);
+        if (tsetSize(set) == 0) dbDelete(c->db,c->argv[1]);
         signalModifiedKey(c->db,c->argv[1]);
         server.dirty++;
         addReply(c,shared.cone);
@@ -359,7 +355,7 @@ void smoveCommand(redisClient *c) {
     }
 
     /* Remove the src set from the database when empty */
-    if (setTypeSize(srcset) == 0) dbDelete(c->db,c->argv[1]);
+    if (tsetSize(srcset) == 0) dbDelete(c->db,c->argv[1]);
     signalModifiedKey(c->db,c->argv[1]);
     signalModifiedKey(c->db,c->argv[2]);
     server.dirty++;
@@ -394,7 +390,7 @@ void scardCommand(redisClient *c) {
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_SET)) return;
 
-    addReplyLongLong(c,setTypeSize(o));
+    addReplyLongLong(c,tsetSize(o));
 }
 
 void spopCommand(redisClient *c) {
@@ -426,7 +422,7 @@ void spopCommand(redisClient *c) {
     c->argv[2] = ele;
 
     addReplyBulk(c,ele);
-    if (setTypeSize(set) == 0) dbDelete(c->db,c->argv[1]);
+    if (tsetSize(set) == 0) dbDelete(c->db,c->argv[1]);
     signalModifiedKey(c->db,c->argv[1]);
     server.dirty++;
 }
@@ -448,7 +444,7 @@ void srandmemberCommand(redisClient *c) {
 }
 
 int qsortCompareSetsByCardinality(const void *s1, const void *s2) {
-    return setTypeSize(*(robj**)s1)-setTypeSize(*(robj**)s2);
+    return tsetSize(*(robj**)s1)-tsetSize(*(robj**)s2);
 }
 
 void sinterGenericCommand(redisClient *c, robj **setkeys, unsigned long setnum, robj *dstkey) {
@@ -565,9 +561,9 @@ void sinterGenericCommand(redisClient *c, robj **setkeys, unsigned long setnum, 
         /* Store the resulting set into the target, if the intersection
          * is not an empty set. */
         dbDelete(c->db,dstkey);
-        if (setTypeSize(dstset) > 0) {
+        if (tsetSize(dstset) > 0) {
             dbAdd(c->db,dstkey,dstset);
-            addReplyLongLong(c,setTypeSize(dstset));
+            addReplyLongLong(c,tsetSize(dstset));
         } else {
             decrRefCount(dstset);
             addReply(c,shared.czero);
@@ -657,9 +653,9 @@ void sunionDiffGenericCommand(redisClient *c, robj **setkeys, int setnum, robj *
         /* If we have a target key where to store the resulting set
          * create this key with the result set inside */
         dbDelete(c->db,dstkey);
-        if (setTypeSize(dstset) > 0) {
+        if (tsetSize(dstset) > 0) {
             dbAdd(c->db,dstkey,dstset);
-            addReplyLongLong(c,setTypeSize(dstset));
+            addReplyLongLong(c,tsetSize(dstset));
         } else {
             decrRefCount(dstset);
             addReply(c,shared.czero);

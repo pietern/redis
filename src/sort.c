@@ -234,7 +234,7 @@ void sortCommand(redisClient *c) {
     } else if (sortval->type == REDIS_SET) {
         iterset it;
         rlit tmp;
-        vectorlen = tsetLength(sortval);
+        vectorlen = tsetSize(sortval);
         vector = zmalloc(sizeof(redisSortObject)*vectorlen);
         tsetInitIterator(&it,sortval);
 

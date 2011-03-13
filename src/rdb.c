@@ -740,7 +740,7 @@ robj *rdbLoadObject(int type, FILE *fp) {
                 if (isObjectRepresentableAsLongLong(ele,&llval) == REDIS_OK) {
                     o->ptr = intsetAdd(o->ptr,llval,NULL);
                 } else {
-                    setTypeConvert(o,REDIS_ENCODING_HT);
+                    tsetConvert(o,REDIS_ENCODING_HT);
                     dictExpand(o->ptr,len);
                 }
             }
@@ -869,7 +869,7 @@ robj *rdbLoadObject(int type, FILE *fp) {
                 o->type = REDIS_SET;
                 o->encoding = REDIS_ENCODING_INTSET;
                 if (intsetLen(o->ptr) > server.set_max_intset_entries)
-                    setTypeConvert(o,REDIS_ENCODING_HT);
+                    tsetConvert(o,REDIS_ENCODING_HT);
                 break;
             case REDIS_ZSET_ZIPLIST:
                 o->type = REDIS_ZSET;
