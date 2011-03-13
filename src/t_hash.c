@@ -293,9 +293,6 @@ unsigned int thashLength(iterhash *it) {
 }
 
 int thashNext(iterhash *it, rlit *field, rlit *value) {
-    litClear(field);
-    litClear(value);
-
     if (it->encoding == REDIS_ENCODING_ZIPMAP) {
         unsigned char *fstr, *vstr;
         unsigned int flen, vlen;

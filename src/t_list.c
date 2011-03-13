@@ -281,8 +281,6 @@ unsigned int tlistLength(iterlist *it) {
 }
 
 int tlistNext(iterlist *it, rlit *ele) {
-    litClear(ele);
-
     if (it->encoding == REDIS_ENCODING_ZIPLIST) {
         unsigned char *str = NULL;
         unsigned int len;

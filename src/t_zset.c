@@ -840,8 +840,6 @@ unsigned int tzsetLength(iterzset *it) {
 }
 
 int tzsetNext(iterzset *it, rlit *ele, double *score) {
-    litClear(ele);
-
     if (it->encoding == REDIS_ENCODING_ZIPLIST) {
         unsigned char *str = NULL;
         unsigned int len;
@@ -1414,6 +1412,8 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
                         if (sdslen(tmp->ptr) > maxelelen)
                             maxelelen = sdslen(tmp->ptr);
                 }
+
+                litClear(&zlit);
             }
         }
     } else if (op == REDIS_OP_UNION) {
@@ -1426,8 +1426,10 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
 
             while (zuiNext(&src[i],&zlit,&score)) {
                 /* Skip key when already processed */
-                if (dictFind(dstzset->dict,litGetObject(&zlit)) != NULL)
+                if (dictFind(dstzset->dict,litGetObject(&zlit)) != NULL) {
+                    litClear(&zlit);
                     continue;
+                }
 
                 /* Initialize score */
                 score *= src[i].weight;
@@ -1446,6 +1448,7 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
                 incrRefCount(tmp); /* added to skiplist */
                 dictAdd(dstzset->dict,tmp,&znode->score);
                 incrRefCount(tmp); /* added to dictionary */
+                litClear(&zlit);
 
                 if (tmp->encoding == REDIS_ENCODING_RAW)
                     if (sdslen(tmp->ptr) > maxelelen)

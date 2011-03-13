@@ -244,8 +244,6 @@ unsigned int tsetLength(iterset *it) {
 }
 
 int tsetNext(iterset *it, rlit *ele) {
-    litClear(ele);
-
     if (it->encoding == REDIS_ENCODING_INTSET) {
         long long ll;
         if (!intsetGet(it->iter.is.is,it->iter.is.ii,&ll)) return 0;
