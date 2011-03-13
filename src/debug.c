@@ -110,57 +110,64 @@ void computeDatasetDigest(unsigned char *final) {
             if (o->type == REDIS_STRING) {
                 mixObjectDigest(digest,o);
             } else if (o->type == REDIS_LIST) {
-                listTypeIterator *li = listTypeInitIterator(o,0,REDIS_TAIL);
-                listTypeEntry entry;
-                while(listTypeNext(li,&entry)) {
-                    robj *eleobj = listTypeGet(&entry);
-                    mixObjectDigest(digest,eleobj);
-                    decrRefCount(eleobj);
+                rlit elelit;
+                char *estr;
+                int elen;
+                iterlist it;
+
+                tlistInitIterator(&it,o);
+                while (tlistNext(&it,&elelit)) {
+                    elen = litGetBuffer(&elelit,&estr);
+                    mixDigest(digest,estr,elen);
                 }
-                listTypeReleaseIterator(li);
+                tlistClearIterator(&it);
             } else if (o->type == REDIS_SET) {
-                setTypeIterator *si = setTypeInitIterator(o);
-                robj *ele;
-                while((ele = setTypeNextObject(si)) != NULL) {
-                    xorObjectDigest(digest,ele);
-                    decrRefCount(ele);
+                rlit elelit;
+                char *estr;
+                int elen;
+                iterset it;
+
+                tsetInitIterator(&it,o);
+                while (tsetNext(&it,&elelit)) {
+                    elen = litGetBuffer(&elelit,&estr);
+                    xorDigest(digest,estr,elen);
                 }
-                setTypeReleaseIterator(si);
+                tsetClearIterator(&it);
             } else if (o->type == REDIS_ZSET) {
-                zset *zs = o->ptr;
-                dictIterator *di = dictGetIterator(zs->dict);
-                dictEntry *de;
+                unsigned char eledigest[20];
+                rlit elelit;
+                char *estr;
+                int elen;
+                double score;
+                iterzset it;
 
-                while((de = dictNext(di)) != NULL) {
-                    robj *eleobj = dictGetEntryKey(de);
-                    double *score = dictGetEntryVal(de);
-                    unsigned char eledigest[20];
-
-                    snprintf(buf,sizeof(buf),"%.17g",*score);
+                tzsetInitIterator(&it,o);
+                while (tzsetNext(&it,&elelit,&score)) {
                     memset(eledigest,0,20);
-                    mixObjectDigest(eledigest,eleobj);
+                    elen = litGetBuffer(&elelit,&estr);
+                    mixDigest(eledigest,estr,elen);
+                    snprintf(buf,sizeof(buf),"%.17g",score);
                     mixDigest(eledigest,buf,strlen(buf));
                     xorDigest(digest,eledigest,20);
                 }
-                dictReleaseIterator(di);
+                tzsetClearIterator(&it);
             } else if (o->type == REDIS_HASH) {
-                hashTypeIterator *hi;
-                robj *obj;
+                unsigned char eledigest[20];
+                rlit flit, vlit;
+                char *fstr, *vstr;
+                int flen, vlen;
+                iterhash it;
 
-                hi = hashTypeInitIterator(o);
-                while (hashTypeNext(hi) != REDIS_ERR) {
-                    unsigned char eledigest[20];
-
+                thashInitIterator(&it,o);
+                while (thashNext(&it,&flit,&vlit)) {
                     memset(eledigest,0,20);
-                    obj = hashTypeCurrentObject(hi,REDIS_HASH_KEY);
-                    mixObjectDigest(eledigest,obj);
-                    decrRefCount(obj);
-                    obj = hashTypeCurrentObject(hi,REDIS_HASH_VALUE);
-                    mixObjectDigest(eledigest,obj);
-                    decrRefCount(obj);
+                    flen = litGetBuffer(&flit,&fstr);
+                    mixDigest(eledigest,fstr,flen);
+                    vlen = litGetBuffer(&vlit,&vstr);
+                    mixDigest(eledigest,vstr,vlen);
                     xorDigest(digest,eledigest,20);
                 }
-                hashTypeReleaseIterator(hi);
+                thashClearIterator(&it);
             } else {
                 redisPanic("Unknown object type");
             }

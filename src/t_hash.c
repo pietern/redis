@@ -266,6 +266,70 @@ void convertToRealHash(robj *o) {
     zfree(zm);
 }
 
+void thashInitIterator(iterhash *it, robj *hobj) {
+    redisAssert(hobj->type == REDIS_HASH);
+    it->encoding = hobj->encoding;
+    if (it->encoding == REDIS_ENCODING_ZIPMAP) {
+        it->iter.zm.zm = hobj->ptr;
+        it->iter.zm.zi = zipmapRewind(it->iter.zm.zm);
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        it->iter.ht.dict = hobj->ptr;
+        it->iter.ht.di = dictGetIterator(it->iter.ht.dict);
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+}
+
+unsigned int thashLength(iterhash *it) {
+    if (it->encoding == REDIS_ENCODING_ZIPMAP) {
+        return zipmapLen(it->iter.zm.zm);
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        return dictSize(it->iter.ht.dict);
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
+int thashNext(iterhash *it, rlit *field, rlit *value) {
+    litClear(field);
+    litClear(value);
+
+    if (it->encoding == REDIS_ENCODING_ZIPMAP) {
+        unsigned char *fstr, *vstr;
+        unsigned int flen, vlen;
+
+        it->iter.zm.zi = zipmapNext(it->iter.zm.zi,&fstr,&flen,&vstr,&vlen);
+        if (it->iter.zm.zi == NULL)
+            return 0;
+
+        litFromBuffer(field,(char*)fstr,flen);
+        litFromBuffer(value,(char*)vstr,vlen);
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        dictEntry *de = dictNext(it->iter.ht.di);
+        if (de == NULL)
+            return 0;
+
+        litFromObject(field,dictGetEntryKey(de));
+        litFromObject(value,dictGetEntryVal(de));
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+
+    return 1;
+}
+
+void thashClearIterator(iterhash *it) {
+    if (it->encoding == REDIS_ENCODING_ZIPMAP) {
+        /* skip */
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        dictReleaseIterator(it->iter.ht.di);
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+}
+
 /*-----------------------------------------------------------------------------
  * Hash type commands
  *----------------------------------------------------------------------------*/

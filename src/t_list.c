@@ -254,6 +254,71 @@ void listTypeConvert(robj *subject, int enc) {
     }
 }
 
+void tlistInitIterator(iterlist *it, robj *lobj) {
+    redisAssert(lobj->type == REDIS_LIST);
+    it->encoding = lobj->encoding;
+    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
+        it->iter.zl.zl = lobj->ptr;
+        it->iter.zl.eptr = ziplistIndex(it->iter.zl.zl,0);
+    } else if (it->encoding == REDIS_ENCODING_LINKEDLIST) {
+        it->iter.dll.list = lobj->ptr;
+        it->iter.dll.ln = listFirst(it->iter.dll.list);
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+}
+
+unsigned int tlistLength(iterlist *it) {
+    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
+        return ziplistLen(it->iter.zl.zl);
+    } else if (it->encoding == REDIS_ENCODING_LINKEDLIST) {
+        return listLength(it->iter.dll.list);
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
+int tlistNext(iterlist *it, rlit *ele) {
+    litClear(ele);
+
+    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *str = NULL;
+        unsigned int len;
+        long long ll;
+
+        if (it->iter.zl.eptr == NULL)
+            return 0;
+
+        redisAssert(ziplistGet(it->iter.zl.eptr,&str,&len,&ll));
+        if (str != NULL)
+            litFromBuffer(ele,(char*)str,(int)len);
+        else
+            litFromLongLong(ele,ll);
+
+        /* Move to next element. */
+        it->iter.zl.eptr = ziplistNext(it->iter.zl.zl,it->iter.zl.eptr);
+    } else if (it->encoding == REDIS_ENCODING_LINKEDLIST) {
+        if (it->iter.dll.ln == NULL)
+            return 0;
+
+        litFromObject(ele,listNodeValue(it->iter.dll.ln));
+
+        /* Move to next element. */
+        it->iter.dll.ln =  it->iter.dll.ln->next;
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+    return 1;
+}
+
+void tlistClearIterator(iterlist *it) {
+    REDIS_NOTUSED(it);
+    /* Nothing to clear. */
+}
+
 /*-----------------------------------------------------------------------------
  * List Commands
  *----------------------------------------------------------------------------*/

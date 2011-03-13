@@ -603,6 +603,28 @@ typedef struct zset {
     zskiplist *zsl;
 } zset;
 
+/* List iterator. */
+typedef struct _iterlist {
+    int encoding;
+    union {
+        /* Ziplist backed list. */
+        struct {
+            unsigned char *zl;
+            unsigned char *eptr;
+        } zl;
+        /* Doubly linked list. */
+        struct {
+            list *list;
+            listNode *ln;
+        } dll;
+    } iter;
+} iterlist;
+
+void tlistInitIterator(iterlist *it, robj *subject);
+unsigned int tlistLength(iterlist *it);
+int tlistNext(iterlist *it, rlit *ele);
+void tlistClearIterator(iterlist *it);
+
 /* Set iterator. */
 typedef struct _iterset {
     int encoding;
@@ -649,6 +671,29 @@ unsigned int tzsetLength(iterzset *it);
 int tzsetNext(iterzset *it, rlit *ele, double *score);
 int tzsetFind(iterzset *it, rlit *ele, double *score);
 void tzsetClearIterator(iterzset *it);
+
+/* Hash iterator. */
+typedef struct _iterhash {
+    int encoding;
+    union {
+        /* Zipmap backed hash. */
+        struct {
+            unsigned char *zm;
+            unsigned char *zi;
+        } zm;
+        /* Hashtable backed hash. */
+        struct {
+            dict *dict;
+            dictIterator *di;
+            dictEntry *de;
+        } ht;
+    } iter;
+} iterhash;
+
+void thashInitIterator(iterhash *it, robj *subject);
+unsigned int thashLength(iterhash *it);
+int thashNext(iterhash *it, rlit *field, rlit *value);
+void thashClearIterator(iterhash *it);
 
 /* DIsk store threaded I/O request message */
 #define REDIS_IOJOB_LOAD 0
