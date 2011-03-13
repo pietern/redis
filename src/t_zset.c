@@ -809,6 +809,19 @@ void zsetConvert(robj *zobj, int encoding) {
     }
 }
 
+unsigned int tzsetLength(robj *zobj) {
+    redisAssert(zobj->type == REDIS_ZSET);
+    if (zobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        return zzlLength(zobj->ptr);
+    } else if (zobj->encoding == REDIS_ENCODING_RAW) {
+        return ((zset*)zobj->ptr)->zsl->length;
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
 void tzsetInitIterator(iterzset *it, robj *zobj) {
     redisAssert(zobj->type == REDIS_ZSET);
     it->encoding = zobj->encoding;
@@ -825,18 +838,6 @@ void tzsetInitIterator(iterzset *it, robj *zobj) {
     } else {
         redisPanic("Unknown sorted set encoding");
     }
-}
-
-unsigned int tzsetLength(iterzset *it) {
-    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
-        return zzlLength(it->iter.zl.zl);
-    } else if (it->encoding == REDIS_ENCODING_RAW) {
-        return it->iter.sl.zs->zsl->length;
-    } else {
-        redisPanic("Unknown sorted set encoding");
-    }
-
-    return 0; /* Avoid warnings. */
 }
 
 int tzsetNext(iterzset *it, rlit *ele, double *score) {
@@ -1213,9 +1214,9 @@ int zuiLength(zsetopsrc *op) {
         return 0;
 
     if (op->type == REDIS_SET) {
-        return tsetLength(&op->iter.set);
+        return tsetLength(op->subject);
     } else if (op->type == REDIS_ZSET) {
-        return tzsetLength(&op->iter.zset);
+        return tzsetLength(op->subject);
     } else {
         redisPanic("Unsupported type");
     }

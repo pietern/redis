@@ -216,6 +216,19 @@ void setTypeConvert(robj *setobj, int enc) {
     }
 }
 
+unsigned int tsetLength(robj *sobj) {
+    redisAssert(sobj->type == REDIS_SET);
+    if (sobj->encoding == REDIS_ENCODING_INTSET) {
+        return intsetLen(sobj->ptr);
+    } else if (sobj->encoding == REDIS_ENCODING_HT) {
+        return dictSize((dict*)sobj->ptr);
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
 void tsetInitIterator(iterset *it, robj *sobj) {
     redisAssert(sobj->type == REDIS_SET);
     it->encoding = sobj->encoding;
@@ -229,18 +242,6 @@ void tsetInitIterator(iterset *it, robj *sobj) {
     } else {
         redisPanic("Unknown set encoding");
     }
-}
-
-unsigned int tsetLength(iterset *it) {
-    if (it->encoding == REDIS_ENCODING_INTSET) {
-        return intsetLen(it->iter.is.is);
-    } else if (it->encoding == REDIS_ENCODING_HT) {
-        return dictSize(it->iter.ht.dict);
-    } else {
-        redisPanic("Unknown set encoding");
-    }
-
-    return 0; /* Avoid warnings. */
 }
 
 int tsetNext(iterset *it, rlit *ele) {

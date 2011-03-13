@@ -216,9 +216,9 @@ void sortCommand(redisClient *c) {
     if (sortval->type == REDIS_LIST) {
         iterlist it;
         rlit tmp;
-        tlistInitIterator(&it,sortval);
-        vectorlen = tlistLength(&it);
+        vectorlen = tlistLength(sortval);
         vector = zmalloc(sizeof(redisSortObject)*vectorlen);
+        tlistInitIterator(&it,sortval);
 
         j = 0;
         while (tlistNext(&it,&tmp)) {
@@ -234,9 +234,9 @@ void sortCommand(redisClient *c) {
     } else if (sortval->type == REDIS_SET) {
         iterset it;
         rlit tmp;
-        tsetInitIterator(&it,sortval);
-        vectorlen = tsetLength(&it);
+        vectorlen = tsetLength(sortval);
         vector = zmalloc(sizeof(redisSortObject)*vectorlen);
+        tsetInitIterator(&it,sortval);
 
         j = 0;
         while (tsetNext(&it,&tmp)) {
@@ -252,9 +252,9 @@ void sortCommand(redisClient *c) {
     } else if (sortval->type == REDIS_ZSET) {
         iterzset it;
         rlit tmp;
-        tzsetInitIterator(&it,sortval);
-        vectorlen = tzsetLength(&it);
+        vectorlen = tzsetLength(sortval);
         vector = zmalloc(sizeof(redisSortObject)*vectorlen);
+        tzsetInitIterator(&it,sortval);
 
         j = 0;
         while (tzsetNext(&it,&tmp,NULL)) {

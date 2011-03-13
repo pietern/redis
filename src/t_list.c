@@ -254,6 +254,19 @@ void listTypeConvert(robj *subject, int enc) {
     }
 }
 
+unsigned int tlistLength(robj *lobj) {
+    redisAssert(lobj->type == REDIS_LIST);
+    if (lobj->encoding == REDIS_ENCODING_ZIPLIST) {
+        return ziplistLen(lobj->ptr);
+    } else if (lobj->encoding == REDIS_ENCODING_LINKEDLIST) {
+        return listLength((list*)lobj->ptr);
+    } else {
+        redisPanic("Unknown list encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
 void tlistInitIterator(iterlist *it, robj *lobj) {
     redisAssert(lobj->type == REDIS_LIST);
     it->encoding = lobj->encoding;
@@ -266,18 +279,6 @@ void tlistInitIterator(iterlist *it, robj *lobj) {
     } else {
         redisPanic("Unknown list encoding");
     }
-}
-
-unsigned int tlistLength(iterlist *it) {
-    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
-        return ziplistLen(it->iter.zl.zl);
-    } else if (it->encoding == REDIS_ENCODING_LINKEDLIST) {
-        return listLength(it->iter.dll.list);
-    } else {
-        redisPanic("Unknown list encoding");
-    }
-
-    return 0; /* Avoid warnings. */
 }
 
 int tlistNext(iterlist *it, rlit *ele) {

@@ -607,8 +607,8 @@ typedef struct _iterlist {
     } iter;
 } iterlist;
 
-void tlistInitIterator(iterlist *it, robj *subject);
-unsigned int tlistLength(iterlist *it);
+unsigned int tlistLength(robj *lobj);
+void tlistInitIterator(iterlist *it, robj *lobj);
 int tlistNext(iterlist *it, rlit *ele);
 void tlistClearIterator(iterlist *it);
 
@@ -630,8 +630,8 @@ typedef struct _iterset {
     } iter;
 } iterset;
 
-void tsetInitIterator(iterset *it, robj *subject);
-unsigned int tsetLength(iterset *it);
+unsigned int tsetLength(robj *sobj);
+void tsetInitIterator(iterset *it, robj *sobj);
 int tsetNext(iterset *it, rlit *ele);
 int tsetFind(iterset *it, rlit *ele);
 void tsetClearIterator(iterset *it);
@@ -653,8 +653,8 @@ typedef struct _iterzset {
     } iter;
 } iterzset;
 
-void tzsetInitIterator(iterzset *it, robj *subject);
-unsigned int tzsetLength(iterzset *it);
+unsigned int tzsetLength(robj *zobj);
+void tzsetInitIterator(iterzset *it, robj *zobj);
 int tzsetNext(iterzset *it, rlit *ele, double *score);
 int tzsetFind(iterzset *it, rlit *ele, double *score);
 void tzsetClearIterator(iterzset *it);
@@ -677,8 +677,8 @@ typedef struct _iterhash {
     } iter;
 } iterhash;
 
-void thashInitIterator(iterhash *it, robj *subject);
-unsigned int thashLength(iterhash *it);
+unsigned int thashLength(robj *hobj);
+void thashInitIterator(iterhash *it, robj *hobj);
 int thashNext(iterhash *it, rlit *field, rlit *value);
 void thashClearIterator(iterhash *it);
 

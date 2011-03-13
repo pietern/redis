@@ -266,6 +266,19 @@ void convertToRealHash(robj *o) {
     zfree(zm);
 }
 
+unsigned int thashLength(robj *hobj) {
+    redisAssert(hobj->type == REDIS_HASH);
+    if (hobj->encoding == REDIS_ENCODING_ZIPMAP) {
+        return zipmapLen(hobj->ptr);
+    } else if (hobj->encoding == REDIS_ENCODING_HT) {
+        return dictSize((dict*)hobj->ptr);
+    } else {
+        redisPanic("Unknown hash encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
 void thashInitIterator(iterhash *it, robj *hobj) {
     redisAssert(hobj->type == REDIS_HASH);
     it->encoding = hobj->encoding;
@@ -278,18 +291,6 @@ void thashInitIterator(iterhash *it, robj *hobj) {
     } else {
         redisPanic("Unknown hash encoding");
     }
-}
-
-unsigned int thashLength(iterhash *it) {
-    if (it->encoding == REDIS_ENCODING_ZIPMAP) {
-        return zipmapLen(it->iter.zm.zm);
-    } else if (it->encoding == REDIS_ENCODING_HT) {
-        return dictSize(it->iter.ht.dict);
-    } else {
-        redisPanic("Unknown hash encoding");
-    }
-
-    return 0; /* Avoid warnings. */
 }
 
 int thashNext(iterhash *it, rlit *field, rlit *value) {
