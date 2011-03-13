@@ -874,6 +874,7 @@ int syncWrite(int fd, char *ptr, ssize_t size, int timeout);
 int syncRead(int fd, char *ptr, ssize_t size, int timeout);
 int syncReadLine(int fd, char *ptr, ssize_t size, int timeout);
 int fwriteBulkString(FILE *fp, char *s, unsigned long len);
+int fwriteBulkLiteral(FILE *fp, rlit *lit);
 int fwriteBulkDouble(FILE *fp, double d);
 int fwriteBulkLongLong(FILE *fp, long long l);
 int fwriteBulkObject(FILE *fp, robj *obj);

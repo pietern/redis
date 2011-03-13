@@ -367,115 +367,58 @@ int rewriteAppendOnlyFile(char *filename) {
             } else if (o->type == REDIS_LIST) {
                 /* Emit the RPUSHes needed to rebuild the list */
                 char cmd[]="*3\r\n$5\r\nRPUSH\r\n";
-                if (o->encoding == REDIS_ENCODING_ZIPLIST) {
-                    unsigned char *zl = o->ptr;
-                    unsigned char *p = ziplistIndex(zl,0);
-                    unsigned char *vstr;
-                    unsigned int vlen;
-                    long long vlong;
+                iterlist it;
+                rlit ele;
 
-                    while(ziplistGet(p,&vstr,&vlen,&vlong)) {
-                        if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
-                        if (fwriteBulkObject(fp,&key) == 0) goto werr;
-                        if (vstr) {
-                            if (fwriteBulkString(fp,(char*)vstr,vlen) == 0)
-                                goto werr;
-                        } else {
-                            if (fwriteBulkLongLong(fp,vlong) == 0)
-                                goto werr;
-                        }
-                        p = ziplistNext(zl,p);
-                    }
-                } else if (o->encoding == REDIS_ENCODING_LINKEDLIST) {
-                    list *list = o->ptr;
-                    listNode *ln;
-                    listIter li;
-
-                    listRewind(list,&li);
-                    while((ln = listNext(&li))) {
-                        robj *eleobj = listNodeValue(ln);
-
-                        if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
-                        if (fwriteBulkObject(fp,&key) == 0) goto werr;
-                        if (fwriteBulkObject(fp,eleobj) == 0) goto werr;
-                    }
-                } else {
-                    redisPanic("Unknown list encoding");
-                }
-            } else if (o->type == REDIS_SET) {
-                char cmd[]="*3\r\n$4\r\nSADD\r\n";
-
-                /* Emit the SADDs needed to rebuild the set */
-                if (o->encoding == REDIS_ENCODING_INTSET) {
-                    int ii = 0;
-                    int64_t llval;
-                    while(intsetGet(o->ptr,ii++,&llval)) {
-                        if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
-                        if (fwriteBulkObject(fp,&key) == 0) goto werr;
-                        if (fwriteBulkLongLong(fp,llval) == 0) goto werr;
-                    }
-                } else if (o->encoding == REDIS_ENCODING_HT) {
-                    dictIterator *di = dictGetIterator(o->ptr);
-                    dictEntry *de;
-                    while((de = dictNext(di)) != NULL) {
-                        robj *eleobj = dictGetEntryKey(de);
-                        if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
-                        if (fwriteBulkObject(fp,&key) == 0) goto werr;
-                        if (fwriteBulkObject(fp,eleobj) == 0) goto werr;
-                    }
-                    dictReleaseIterator(di);
-                } else {
-                    redisPanic("Unknown set encoding");
-                }
-            } else if (o->type == REDIS_ZSET) {
-                /* Emit the ZADDs needed to rebuild the sorted set */
-                zset *zs = o->ptr;
-                dictIterator *di = dictGetIterator(zs->dict);
-                dictEntry *de;
-
-                while((de = dictNext(di)) != NULL) {
-                    char cmd[]="*4\r\n$4\r\nZADD\r\n";
-                    robj *eleobj = dictGetEntryKey(de);
-                    double *score = dictGetEntryVal(de);
-
+                tlistInitIterator(&it,o);
+                while (tlistNext(&it,&ele)) {
                     if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
                     if (fwriteBulkObject(fp,&key) == 0) goto werr;
-                    if (fwriteBulkDouble(fp,*score) == 0) goto werr;
-                    if (fwriteBulkObject(fp,eleobj) == 0) goto werr;
+                    if (fwriteBulkLiteral(fp,&ele) == 0) goto werr;
                 }
-                dictReleaseIterator(di);
+                tlistClearIterator(&it);
+            } else if (o->type == REDIS_SET) {
+                /* Emit the SADDs needed to rebuild the set */
+                char cmd[]="*3\r\n$4\r\nSADD\r\n";
+                iterset it;
+                rlit ele;
+
+                tsetInitIterator(&it,o);
+                while (tsetNext(&it,&ele)) {
+                    if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
+                    if (fwriteBulkObject(fp,&key) == 0) goto werr;
+                    if (fwriteBulkLiteral(fp,&ele) == 0) goto werr;
+                }
+                tsetClearIterator(&it);
+            } else if (o->type == REDIS_ZSET) {
+                /* Emit the ZADDs needed to rebuild the sorted set */
+                char cmd[]="*4\r\n$4\r\nZADD\r\n";
+                iterzset it;
+                rlit ele;
+                double score;
+
+                tzsetInitIterator(&it,o);
+                while (tzsetNext(&it,&ele,&score)) {
+                    if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
+                    if (fwriteBulkObject(fp,&key) == 0) goto werr;
+                    if (fwriteBulkDouble(fp,score) == 0) goto werr;
+                    if (fwriteBulkLiteral(fp,&ele) == 0) goto werr;
+                }
+                tzsetClearIterator(&it);
             } else if (o->type == REDIS_HASH) {
-                char cmd[]="*4\r\n$4\r\nHSET\r\n";
-
                 /* Emit the HSETs needed to rebuild the hash */
-                if (o->encoding == REDIS_ENCODING_ZIPMAP) {
-                    unsigned char *p = zipmapRewind(o->ptr);
-                    unsigned char *field, *val;
-                    unsigned int flen, vlen;
+                char cmd[]="*4\r\n$4\r\nHSET\r\n";
+                iterhash it;
+                rlit flit, vlit;
 
-                    while((p = zipmapNext(p,&field,&flen,&val,&vlen)) != NULL) {
-                        if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
-                        if (fwriteBulkObject(fp,&key) == 0) goto werr;
-                        if (fwriteBulkString(fp,(char*)field,flen) == 0)
-                            goto werr;
-                        if (fwriteBulkString(fp,(char*)val,vlen) == 0)
-                            goto werr;
-                    }
-                } else {
-                    dictIterator *di = dictGetIterator(o->ptr);
-                    dictEntry *de;
-
-                    while((de = dictNext(di)) != NULL) {
-                        robj *field = dictGetEntryKey(de);
-                        robj *val = dictGetEntryVal(de);
-
-                        if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
-                        if (fwriteBulkObject(fp,&key) == 0) goto werr;
-                        if (fwriteBulkObject(fp,field) == 0) goto werr;
-                        if (fwriteBulkObject(fp,val) == 0) goto werr;
-                    }
-                    dictReleaseIterator(di);
+                thashInitIterator(&it,o);
+                while (thashNext(&it,&flit,&vlit)) {
+                    if (fwrite(cmd,sizeof(cmd)-1,1,fp) == 0) goto werr;
+                    if (fwriteBulkObject(fp,&key) == 0) goto werr;
+                    if (fwriteBulkLiteral(fp,&flit) == 0) goto werr;
+                    if (fwriteBulkLiteral(fp,&vlit) == 0) goto werr;
                 }
+                thashClearIterator(&it);
             } else {
                 redisPanic("Unknown object type");
             }

@@ -117,6 +117,13 @@ int fwriteBulkString(FILE *fp, char *s, unsigned long len) {
     return 1;
 }
 
+/* Write a literal value in bulk format $<count>\r\n<payload>\r\n */
+int fwriteBulkLiteral(FILE *fp, rlit *lit) {
+    char *str;
+    int len = litGetBuffer(lit,&str);
+    return fwriteBulkString(fp,str,len);
+}
+
 /* Write a double value in bulk format $<count>\r\n<payload>\r\n */
 int fwriteBulkDouble(FILE *fp, double d) {
     char buf[128], dbuf[128];
