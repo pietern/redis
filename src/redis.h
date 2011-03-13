@@ -763,6 +763,7 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask);
 void addReplyBulk(redisClient *c, robj *obj);
 void addReplyBulkCString(redisClient *c, char *s);
 void addReplyBulkCBuffer(redisClient *c, void *p, size_t len);
+void addReplyBulkLiteral(redisClient *c, rlit *lit);
 void addReplyBulkLongLong(redisClient *c, long long ll);
 void acceptHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void addReply(redisClient *c, robj *obj);

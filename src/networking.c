@@ -353,6 +353,13 @@ void addReplyBulkCString(redisClient *c, char *s) {
     }
 }
 
+/* Add a Redis literal as bulk reply. */
+void addReplyBulkLiteral(redisClient *c, rlit *lit) {
+    char *str;
+    int len = litGetBuffer(lit,&str);
+    addReplyBulkCBuffer(c,str,len);
+}
+
 /* Add a long long as a bulk reply */
 void addReplyBulkLongLong(redisClient *c, long long ll) {
     char buf[64];
