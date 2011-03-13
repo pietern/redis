@@ -1413,7 +1413,7 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
                             maxelelen = sdslen(tmp->ptr);
                 }
 
-                litClear(&zlit);
+                litClearDirtyObject(&zlit);
             }
         }
     } else if (op == REDIS_OP_UNION) {
@@ -1427,7 +1427,7 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
             while (zuiNext(&src[i],&zlit,&score)) {
                 /* Skip key when already processed */
                 if (dictFind(dstzset->dict,litGetObject(&zlit)) != NULL) {
-                    litClear(&zlit);
+                    litClearDirtyObject(&zlit);
                     continue;
                 }
 
@@ -1448,7 +1448,7 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
                 incrRefCount(tmp); /* added to skiplist */
                 dictAdd(dstzset->dict,tmp,&znode->score);
                 incrRefCount(tmp); /* added to dictionary */
-                litClear(&zlit);
+                litClearDirtyObject(&zlit);
 
                 if (tmp->encoding == REDIS_ENCODING_RAW)
                     if (sdslen(tmp->ptr) > maxelelen)

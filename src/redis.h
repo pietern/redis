@@ -867,7 +867,7 @@ rlit *litFromLongLong(rlit *lit, long long ll);
 robj *litGetObject(rlit *lit);
 int litGetLongLong(rlit *lit, long long *ll);
 int litGetBuffer(rlit *lit, char **buf);
-void litClear(rlit *lit);
+void litClearDirtyObject(rlit *lit);
 
 /* Synchronous I/O with timeout */
 int syncWrite(int fd, char *ptr, ssize_t size, int timeout);

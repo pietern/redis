@@ -224,6 +224,8 @@ void sortCommand(redisClient *c) {
         while (tlistNext(&it,&tmp)) {
             vector[j].obj = litGetObject(&tmp);
             incrRefCount(vector[j].obj);
+            litClearDirtyObject(&tmp);
+
             vector[j].u.score = 0;
             vector[j].u.cmpobj = NULL;
             j++;
@@ -240,6 +242,8 @@ void sortCommand(redisClient *c) {
         while (tsetNext(&it,&tmp)) {
             vector[j].obj = litGetObject(&tmp);
             incrRefCount(vector[j].obj);
+            litClearDirtyObject(&tmp);
+
             vector[j].u.score = 0;
             vector[j].u.cmpobj = NULL;
             j++;
@@ -256,6 +260,8 @@ void sortCommand(redisClient *c) {
         while (tzsetNext(&it,&tmp,NULL)) {
             vector[j].obj = litGetObject(&tmp);
             incrRefCount(vector[j].obj);
+            litClearDirtyObject(&tmp);
+
             vector[j].u.score = 0;
             vector[j].u.cmpobj = NULL;
             j++;

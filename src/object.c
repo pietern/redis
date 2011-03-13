@@ -529,7 +529,7 @@ int litGetBuffer(rlit *lit, char **buf) {
     return lit->buflen;
 }
 
-void litClear(rlit *lit) {
+void litClearDirtyObject(rlit *lit) {
     if (lit->flags & REDIS_LIT_DIRTY_ROBJ)
         decrRefCount(lit->obj);
     bzero(lit,sizeof(*lit));
