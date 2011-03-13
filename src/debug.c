@@ -24,12 +24,6 @@ void xorDigest(unsigned char *digest, void *ptr, size_t len) {
         digest[j] ^= hash[j];
 }
 
-void xorObjectDigest(unsigned char *digest, robj *o) {
-    o = getDecodedObject(o);
-    xorDigest(digest,o->ptr,sdslen(o->ptr));
-    decrRefCount(o);
-}
-
 /* This function instead of just computing the SHA1 and xoring it
  * against diget, also perform the digest of "digest" itself and
  * replace the old value with the new one.
@@ -52,12 +46,6 @@ void mixDigest(unsigned char *digest, void *ptr, size_t len) {
     SHA1Init(&ctx);
     SHA1Update(&ctx,digest,20);
     SHA1Final(digest,&ctx);
-}
-
-void mixObjectDigest(unsigned char *digest, robj *o) {
-    o = getDecodedObject(o);
-    mixDigest(digest,o->ptr,sdslen(o->ptr));
-    decrRefCount(o);
 }
 
 /* Compute the dataset digest. Since keys, sets elements, hashes elements
@@ -108,7 +96,9 @@ void computeDatasetDigest(unsigned char *final) {
 
             /* Save the key and associated value */
             if (o->type == REDIS_STRING) {
-                mixObjectDigest(digest,o);
+                o = getDecodedObject(o);
+                mixDigest(digest,o->ptr,sdslen(o->ptr));
+                decrRefCount(o);
             } else if (o->type == REDIS_LIST) {
                 rlit elelit;
                 char *estr;
