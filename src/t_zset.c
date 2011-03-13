@@ -809,6 +809,103 @@ void zsetConvert(robj *zobj, int encoding) {
     }
 }
 
+void tzsetInitIterator(iterzset *it, robj *zobj) {
+    redisAssert(zobj->type == REDIS_ZSET);
+    it->encoding = zobj->encoding;
+    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
+        it->iter.zl.zl = zobj->ptr;
+        it->iter.zl.eptr = ziplistIndex(it->iter.zl.zl,0);
+        if (it->iter.zl.eptr != NULL) {
+            it->iter.zl.sptr = ziplistNext(it->iter.zl.zl,it->iter.zl.eptr);
+            redisAssert(it->iter.zl.sptr != NULL);
+        }
+    } else if (it->encoding == REDIS_ENCODING_RAW) {
+        it->iter.sl.zs = zobj->ptr;
+        it->iter.sl.node = it->iter.sl.zs->zsl->header->level[0].forward;
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+}
+
+unsigned int tzsetLength(iterzset *it) {
+    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
+        return zzlLength(it->iter.zl.zl);
+    } else if (it->encoding == REDIS_ENCODING_RAW) {
+        return it->iter.sl.zs->zsl->length;
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
+int tzsetNext(iterzset *it, rlit *ele, double *score) {
+    litClear(ele);
+
+    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
+        unsigned char *str = NULL;
+        unsigned int len;
+        long long ll;
+
+        /* No need to check both, but better be explicit. */
+        if (it->iter.zl.eptr == NULL || it->iter.zl.sptr == NULL)
+            return 0;
+
+        redisAssert(ziplistGet(it->iter.zl.eptr,&str,&len,&ll));
+        if (str != NULL)
+            litFromBuffer(ele,(char*)str,(int)len);
+        else
+            litFromLongLong(ele,ll);
+
+        if (score) *score = zzlGetScore(it->iter.zl.sptr);
+
+        /* Move to next element. */
+        zzlNext(it->iter.zl.zl,&it->iter.zl.eptr,&it->iter.zl.sptr);
+    } else if (it->encoding == REDIS_ENCODING_RAW) {
+        if (it->iter.sl.node == NULL)
+            return 0;
+
+        litFromObject(ele,it->iter.sl.node->obj);
+        if (score) *score = it->iter.sl.node->score;
+
+        /* Move to next element. */
+        it->iter.sl.node = it->iter.sl.node->level[0].forward;
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    return 1;
+}
+
+int tzsetFind(iterzset *it, rlit *ele, double *score) {
+    robj *obj = litGetObject(ele);
+    if (it->encoding == REDIS_ENCODING_ZIPLIST) {
+        if (zzlFind(it->iter.zl.zl,obj,score) != NULL) {
+            /* Score is already set by zzlFind. */
+            return 1;
+        } else {
+            return 0;
+        }
+    } else if (it->encoding == REDIS_ENCODING_RAW) {
+        dictEntry *de;
+        if ((de = dictFind(it->iter.sl.zs->dict,obj)) != NULL) {
+            if (score) *score = *(double*)dictGetEntryVal(de);
+            return 1;
+        } else {
+            return 0;
+        }
+    } else {
+        redisPanic("Unknown sorted set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
+void tzsetClearIterator(iterzset *it) {
+    REDIS_NOTUSED(it);
+    /* Nothing to clear. */
+}
+
 /*-----------------------------------------------------------------------------
  * Sorted set commands 
  *----------------------------------------------------------------------------*/
@@ -1080,71 +1177,21 @@ void zremrangebyrankCommand(redisClient *c) {
 typedef struct {
     robj *subject;
     int type; /* Set, sorted set */
-    int encoding;
     double weight;
-
     union {
-        /* Set iterators. */
-        union _iterset {
-            struct {
-                intset *is;
-                int ii;
-            } is;
-            struct {
-                dict *dict;
-                dictIterator *di;
-                dictEntry *de;
-            } ht;
-        } set;
-
-        /* Sorted set iterators. */
-        union _iterzset {
-            struct {
-                unsigned char *zl;
-                unsigned char *eptr, *sptr;
-            } zl;
-            struct {
-                zset *zs;
-                zskiplistNode *node;
-            } sl;
-        } zset;
+        iterset set;
+        iterzset zset;
     } iter;
 } zsetopsrc;
-
-typedef union _iterset iterset;
-typedef union _iterzset iterzset;
 
 void zuiInitIterator(zsetopsrc *op) {
     if (op->subject == NULL)
         return;
 
     if (op->type == REDIS_SET) {
-        iterset *it = &op->iter.set;
-        if (op->encoding == REDIS_ENCODING_INTSET) {
-            it->is.is = op->subject->ptr;
-            it->is.ii = 0;
-        } else if (op->encoding == REDIS_ENCODING_HT) {
-            it->ht.dict = op->subject->ptr;
-            it->ht.di = dictGetIterator(op->subject->ptr);
-            it->ht.de = dictNext(it->ht.di);
-        } else {
-            redisPanic("Unknown set encoding");
-        }
+        tsetInitIterator(&op->iter.set,op->subject);
     } else if (op->type == REDIS_ZSET) {
-        iterzset *it = &op->iter.zset;
-        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
-            it->zl.zl = op->subject->ptr;
-            it->zl.eptr = ziplistIndex(it->zl.zl,0);
-            if (it->zl.eptr != NULL) {
-                it->zl.sptr = ziplistNext(it->zl.zl,it->zl.eptr);
-                redisAssert(it->zl.sptr != NULL);
-            }
-        } else if (op->encoding == REDIS_ENCODING_RAW) {
-            it->sl.zs = op->subject->ptr;
-            it->sl.node = it->sl.zs->zsl->header->level[0].forward;
-        } else {
-            redisPanic("Unknown sorted set encoding");
-        }
+        tzsetInitIterator(&op->iter.zset,op->subject);
     } else {
         redisPanic("Unsupported type");
     }
@@ -1155,23 +1202,9 @@ void zuiClearIterator(zsetopsrc *op) {
         return;
 
     if (op->type == REDIS_SET) {
-        iterset *it = &op->iter.set;
-        if (op->encoding == REDIS_ENCODING_INTSET) {
-            REDIS_NOTUSED(it); /* skip */
-        } else if (op->encoding == REDIS_ENCODING_HT) {
-            dictReleaseIterator(it->ht.di);
-        } else {
-            redisPanic("Unknown set encoding");
-        }
+        tsetClearIterator(&op->iter.set);
     } else if (op->type == REDIS_ZSET) {
-        iterzset *it = &op->iter.zset;
-        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
-            REDIS_NOTUSED(it); /* skip */
-        } else if (op->encoding == REDIS_ENCODING_RAW) {
-            REDIS_NOTUSED(it); /* skip */
-        } else {
-            redisPanic("Unknown sorted set encoding");
-        }
+        tzsetClearIterator(&op->iter.zset);
     } else {
         redisPanic("Unsupported type");
     }
@@ -1182,102 +1215,33 @@ int zuiLength(zsetopsrc *op) {
         return 0;
 
     if (op->type == REDIS_SET) {
-        iterset *it = &op->iter.set;
-        if (op->encoding == REDIS_ENCODING_INTSET) {
-            return intsetLen(it->is.is);
-        } else if (op->encoding == REDIS_ENCODING_HT) {
-            return dictSize(it->ht.dict);
-        } else {
-            redisPanic("Unknown set encoding");
-        }
+        return tsetLength(&op->iter.set);
     } else if (op->type == REDIS_ZSET) {
-        iterzset *it = &op->iter.zset;
-        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
-            return zzlLength(it->zl.zl);
-        } else if (op->encoding == REDIS_ENCODING_RAW) {
-            return it->sl.zs->zsl->length;
-        } else {
-            redisPanic("Unknown sorted set encoding");
-        }
+        return tzsetLength(&op->iter.zset);
     } else {
         redisPanic("Unsupported type");
     }
 }
 
-/* Check if the current position is valid. If so, store it in the passed literal
- * and move to the next element. If not valid, this means we have reached the
- * end of the structure and can abort. */
 int zuiNext(zsetopsrc *op, rlit *lit, double *score) {
     if (op->subject == NULL)
         return 0;
 
-    litClear(lit);
     if (op->type == REDIS_SET) {
-        iterset *it = &op->iter.set;
-
-        if (op->encoding == REDIS_ENCODING_INTSET) {
-            long long ll;
-
-            if (!intsetGet(it->is.is,it->is.ii,&ll))
-                return 0;
-
-            litFromLongLong(lit,ll);
+        if (tsetNext(&op->iter.set,lit)) {
             if (score) *score = 1.0;
-
-            /* Move to next element. */
-            it->is.ii++;
-        } else if (op->encoding == REDIS_ENCODING_HT) {
-            if (it->ht.de == NULL)
-                return 0;
-
-            litFromObject(lit,(robj*)dictGetEntryKey(it->ht.de));
-            if (score) *score = 1.0;
-
-            /* Move to next element. */
-            it->ht.de = dictNext(it->ht.di);
-        } else {
-            redisPanic("Unknown set encoding");
+            return 1;
         }
     } else if (op->type == REDIS_ZSET) {
-        iterzset *it = &op->iter.zset;
-
-        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
-            unsigned char *str = NULL;
-            unsigned int len;
-            long long ll;
-
-            /* No need to check both, but better be explicit. */
-            if (it->zl.eptr == NULL || it->zl.sptr == NULL)
-                return 0;
-
-            redisAssert(ziplistGet(it->zl.eptr,&str,&len,&ll));
-            if (str != NULL)
-                litFromBuffer(lit,(char*)str,(int)len);
-            else
-                litFromLongLong(lit,ll);
-
-            if (score) *score = zzlGetScore(it->zl.sptr);
-
-            /* Move to next element. */
-            zzlNext(it->zl.zl,&it->zl.eptr,&it->zl.sptr);
-        } else if (op->encoding == REDIS_ENCODING_RAW) {
-            if (it->sl.node == NULL)
-                return 0;
-
-            litFromObject(lit,it->sl.node->obj);
-            if (score) *score = it->sl.node->score;
-
-            /* Move to next element. */
-            it->sl.node = it->sl.node->level[0].forward;
-        } else {
-            redisPanic("Unknown sorted set encoding");
+        if (tzsetNext(&op->iter.zset,lit,score)) {
+            return 1;
         }
     } else {
         redisPanic("Unsupported type");
     }
-    return 1;
-}
 
+    return 0;
+}
 
 /* Find value pointed to by lit in the source pointer to by op. When found,
  * return 1 and store its score in target. Return 0 otherwise. */
@@ -1286,55 +1250,19 @@ int zuiFind(zsetopsrc *op, rlit *lit, double *score) {
         return 0;
 
     if (op->type == REDIS_SET) {
-        iterset *it = &op->iter.set;
-
-        if (op->encoding == REDIS_ENCODING_INTSET) {
-            long long ll;
-
-            if (litGetLongLong(lit,&ll) && intsetFind(it->is.is,ll)) {
-                if (score) *score = 1.0;
-                return 1;
-            } else {
-                return 0;
-            }
-        } else if (op->encoding == REDIS_ENCODING_HT) {
-            robj *obj = litGetObject(lit);
-
-            if (dictFind(it->ht.dict,obj) != NULL) {
-                if (score) *score = 1.0;
-                return 1;
-            } else {
-                return 0;
-            }
-        } else {
-            redisPanic("Unknown set encoding");
+        if (tsetFind(&op->iter.set,lit)) {
+            if (score) *score = 1.0;
+            return 1;
         }
     } else if (op->type == REDIS_ZSET) {
-        iterzset *it = &op->iter.zset;
-        robj *obj = litGetObject(lit);
-
-        if (op->encoding == REDIS_ENCODING_ZIPLIST) {
-            if (zzlFind(it->zl.zl,obj,score) != NULL) {
-                /* Score is already set by zzlFind. */
-                return 1;
-            } else {
-                return 0;
-            }
-        } else if (op->encoding == REDIS_ENCODING_RAW) {
-            dictEntry *de;
-
-            if ((de = dictFind(it->sl.zs->dict,obj)) != NULL) {
-                if (score) *score = *(double*)dictGetEntryVal(de);
-                return 1;
-            } else {
-                return 0;
-            }
-        } else {
-            redisPanic("Unknown sorted set encoding");
+        if (tzsetFind(&op->iter.zset,lit,score)) {
+            return 1;
         }
     } else {
         redisPanic("Unsupported type");
     }
+
+    return 0;
 }
 
 int zuiCompareByCardinality(const void *s1, const void *s2) {
@@ -1400,7 +1328,6 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
 
             src[i].subject = obj;
             src[i].type = obj->type;
-            src[i].encoding = obj->encoding;
         } else {
             src[i].subject = NULL;
         }

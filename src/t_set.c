@@ -216,6 +216,80 @@ void setTypeConvert(robj *setobj, int enc) {
     }
 }
 
+void tsetInitIterator(iterset *it, robj *sobj) {
+    redisAssert(sobj->type == REDIS_SET);
+    it->encoding = sobj->encoding;
+    if (it->encoding == REDIS_ENCODING_INTSET) {
+        it->iter.is.is = sobj->ptr;
+        it->iter.is.ii = 0;
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        it->iter.ht.dict = sobj->ptr;
+        it->iter.ht.di = dictGetIterator(it->iter.ht.dict);
+        it->iter.ht.de = dictNext(it->iter.ht.di);
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+}
+
+unsigned int tsetLength(iterset *it) {
+    if (it->encoding == REDIS_ENCODING_INTSET) {
+        return intsetLen(it->iter.is.is);
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        return dictSize(it->iter.ht.dict);
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
+int tsetNext(iterset *it, rlit *ele) {
+    litClear(ele);
+
+    if (it->encoding == REDIS_ENCODING_INTSET) {
+        long long ll;
+        if (!intsetGet(it->iter.is.is,it->iter.is.ii,&ll)) return 0;
+        litFromLongLong(ele,ll);
+
+        /* Move to next element. */
+        it->iter.is.ii++;
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        if (it->iter.ht.de == NULL) return 0;
+        litFromObject(ele,(robj*)dictGetEntryKey(it->iter.ht.de));
+
+        /* Move to next element. */
+        it->iter.ht.de = dictNext(it->iter.ht.di);
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+
+    return 1;
+}
+
+int tsetFind(iterset *it, rlit *ele) {
+    if (it->encoding == REDIS_ENCODING_INTSET) {
+        long long ll;
+        return litGetLongLong(ele,&ll) && intsetFind(it->iter.is.is,ll);
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        robj *obj = litGetObject(ele);
+        return dictFind(it->iter.ht.dict,obj) != NULL;
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+
+    return 0; /* Avoid warnings. */
+}
+
+void tsetClearIterator(iterset *it) {
+    if (it->encoding == REDIS_ENCODING_INTSET) {
+        /* skip */
+    } else if (it->encoding == REDIS_ENCODING_HT) {
+        dictReleaseIterator(it->iter.ht.di);
+    } else {
+        redisPanic("Unknown set encoding");
+    }
+}
+
 void saddCommand(redisClient *c) {
     robj *set;
 

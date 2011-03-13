@@ -603,6 +603,53 @@ typedef struct zset {
     zskiplist *zsl;
 } zset;
 
+/* Set iterator. */
+typedef struct _iterset {
+    int encoding;
+    union {
+        /* Intset backed set. */
+        struct {
+            intset *is;
+            int ii;
+        } is;
+        /* Hashtable backed set. */
+        struct {
+            dict *dict;
+            dictIterator *di;
+            dictEntry *de;
+        } ht;
+    } iter;
+} iterset;
+
+void tsetInitIterator(iterset *it, robj *subject);
+unsigned int tsetLength(iterset *it);
+int tsetNext(iterset *it, rlit *ele);
+int tsetFind(iterset *it, rlit *ele);
+void tsetClearIterator(iterset *it);
+
+/* Sorted set iterator. */
+typedef struct _iterzset {
+    int encoding;
+    union {
+        /* Ziplist backed sorted set. */
+        struct {
+            unsigned char *zl;
+            unsigned char *eptr, *sptr;
+        } zl;
+        /* Skiplist backed sorted set. */
+        struct {
+            zset *zs;
+            zskiplistNode *node;
+        } sl;
+    } iter;
+} iterzset;
+
+void tzsetInitIterator(iterzset *it, robj *subject);
+unsigned int tzsetLength(iterzset *it);
+int tzsetNext(iterzset *it, rlit *ele, double *score);
+int tzsetFind(iterzset *it, rlit *ele, double *score);
+void tzsetClearIterator(iterzset *it);
+
 /* DIsk store threaded I/O request message */
 #define REDIS_IOJOB_LOAD 0
 #define REDIS_IOJOB_SAVE 1
