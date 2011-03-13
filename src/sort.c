@@ -366,7 +366,7 @@ void sortCommand(redisClient *c) {
             listIter li;
 
             if (!getop) {
-                listTypePush(sobj,vector[j].obj,REDIS_TAIL);
+                tlistPush(sobj,vector[j].obj,REDIS_TAIL);
             } else {
                 listRewind(operations,&li);
                 while((ln = listNext(&li))) {
@@ -377,10 +377,10 @@ void sortCommand(redisClient *c) {
                     if (sop->type == REDIS_SORT_GET) {
                         if (!val) val = createStringObject("",0);
 
-                        /* listTypePush does an incrRefCount, so we should take care
+                        /* tlistPush does an incrRefCount, so we should take care
                          * care of the incremented refcount caused by either
                          * lookupKeyByPattern or createStringObject("",0) */
-                        listTypePush(sobj,val,REDIS_TAIL);
+                        tlistPush(sobj,val,REDIS_TAIL);
                         decrRefCount(val);
                     } else {
                         /* always fails */

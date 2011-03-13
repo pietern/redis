@@ -702,7 +702,7 @@ robj *rdbLoadObject(int type, FILE *fp) {
             if (o->encoding == REDIS_ENCODING_ZIPLIST &&
                 ele->encoding == REDIS_ENCODING_RAW &&
                 sdslen(ele->ptr) > server.list_max_ziplist_value)
-                    listTypeConvert(o,REDIS_ENCODING_LINKEDLIST);
+                    tlistConvert(o,REDIS_ENCODING_LINKEDLIST);
 
             if (o->encoding == REDIS_ENCODING_ZIPLIST) {
                 dec = getDecodedObject(ele);
@@ -863,7 +863,7 @@ robj *rdbLoadObject(int type, FILE *fp) {
                 o->type = REDIS_LIST;
                 o->encoding = REDIS_ENCODING_ZIPLIST;
                 if (ziplistLen(o->ptr) > server.list_max_ziplist_entries)
-                    listTypeConvert(o,REDIS_ENCODING_LINKEDLIST);
+                    tlistConvert(o,REDIS_ENCODING_LINKEDLIST);
                 break;
             case REDIS_SET_INTSET:
                 o->type = REDIS_SET;

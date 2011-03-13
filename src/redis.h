@@ -703,22 +703,6 @@ typedef struct ioop {
     time_t ctime; /* This is the creation time of the entry. */
 } ioop;
 
-/* Structure to hold list iteration abstraction. */
-typedef struct {
-    robj *subject;
-    unsigned char encoding;
-    unsigned char direction; /* Iteration direction */
-    unsigned char *zi;
-    listNode *ln;
-} listTypeIterator;
-
-/* Structure for an entry while iterating over a list. */
-typedef struct {
-    listTypeIterator *li;
-    unsigned char *zi;  /* Entry in ziplist */
-    listNode *ln;       /* Entry in linked list */
-} listTypeEntry;
-
 /* Structure to hold set iteration abstraction. */
 typedef struct {
     robj *subject;
@@ -803,18 +787,10 @@ void addReplyStatusFormat(redisClient *c, const char *fmt, ...);
 #endif
 
 /* List data type */
-void listTypeTryConversion(robj *subject, robj *value);
-void listTypePush(robj *subject, robj *value, int where);
-robj *listTypePop(robj *subject, int where);
-unsigned long listTypeLength(robj *subject);
-listTypeIterator *listTypeInitIterator(robj *subject, int index, unsigned char direction);
-void listTypeReleaseIterator(listTypeIterator *li);
-int listTypeNext(listTypeIterator *li, listTypeEntry *entry);
-robj *listTypeGet(listTypeEntry *entry);
-void listTypeInsert(listTypeEntry *entry, robj *value, int where);
-int listTypeEqual(listTypeEntry *entry, robj *o);
-void listTypeDelete(listTypeEntry *entry);
-void listTypeConvert(robj *subject, int enc);
+void tlistTryConversion(robj *subject, robj *value);
+void tlistPush(robj *subject, robj *value, int where);
+robj *tlistPop(robj *subject, int where);
+void tlistConvert(robj *lobj, int encoding);
 void unblockClientWaitingData(redisClient *c);
 int handleClientsWaitingListPush(redisClient *c, robj *key, robj *ele);
 void popGenericCommand(redisClient *c, int where);
