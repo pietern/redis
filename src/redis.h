@@ -568,19 +568,6 @@ struct redisFunctionSym {
     unsigned long pointer;
 };
 
-typedef struct _redisSortObject {
-    robj *obj;
-    union {
-        double score;
-        robj *cmpobj;
-    } u;
-} redisSortObject;
-
-typedef struct _redisSortOperation {
-    int type;
-    robj *pattern;
-} redisSortOperation;
-
 /* ZSETs use a specialized version of Skiplists */
 typedef struct zskiplistNode {
     robj *obj;

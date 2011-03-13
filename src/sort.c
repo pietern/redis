@@ -1,6 +1,19 @@
 #include "redis.h"
 #include "pqsort.h" /* Partial qsort for SORT+LIMIT */
 
+typedef struct _redisSortObject {
+    robj *obj;
+    union {
+        double score;
+        robj *cmpobj;
+    } u;
+} redisSortObject;
+
+typedef struct _redisSortOperation {
+    int type;
+    robj *pattern;
+} redisSortOperation;
+
 redisSortOperation *createSortOperation(int type, robj *pattern) {
     redisSortOperation *so = zmalloc(sizeof(*so));
     so->type = type;
@@ -200,49 +213,56 @@ void sortCommand(redisClient *c) {
     }
 
     /* Load the sorting vector with all the objects to sort */
-    switch(sortval->type) {
-    case REDIS_LIST: vectorlen = listTypeLength(sortval); break;
-    case REDIS_SET: vectorlen =  setTypeSize(sortval); break;
-    case REDIS_ZSET: vectorlen = dictSize(((zset*)sortval->ptr)->dict); break;
-    default: vectorlen = 0; redisPanic("Bad SORT type"); /* Avoid GCC warning */
-    }
-    vector = zmalloc(sizeof(redisSortObject)*vectorlen);
-    j = 0;
-
     if (sortval->type == REDIS_LIST) {
-        listTypeIterator *li = listTypeInitIterator(sortval,0,REDIS_TAIL);
-        listTypeEntry entry;
-        while(listTypeNext(li,&entry)) {
-            vector[j].obj = listTypeGet(&entry);
+        iterlist it;
+        rlit tmp;
+        tlistInitIterator(&it,sortval);
+        vectorlen = tlistLength(&it);
+        vector = zmalloc(sizeof(redisSortObject)*vectorlen);
+
+        j = 0;
+        while (tlistNext(&it,&tmp)) {
+            vector[j].obj = litGetObject(&tmp);
+            incrRefCount(vector[j].obj);
             vector[j].u.score = 0;
             vector[j].u.cmpobj = NULL;
             j++;
         }
-        listTypeReleaseIterator(li);
+        tlistClearIterator(&it);
     } else if (sortval->type == REDIS_SET) {
-        setTypeIterator *si = setTypeInitIterator(sortval);
-        robj *ele;
-        while((ele = setTypeNextObject(si)) != NULL) {
-            vector[j].obj = ele;
+        iterset it;
+        rlit tmp;
+        tsetInitIterator(&it,sortval);
+        vectorlen = tsetLength(&it);
+        vector = zmalloc(sizeof(redisSortObject)*vectorlen);
+
+        j = 0;
+        while (tsetNext(&it,&tmp)) {
+            vector[j].obj = litGetObject(&tmp);
+            incrRefCount(vector[j].obj);
             vector[j].u.score = 0;
             vector[j].u.cmpobj = NULL;
             j++;
         }
-        setTypeReleaseIterator(si);
+        tsetClearIterator(&it);
     } else if (sortval->type == REDIS_ZSET) {
-        dict *set = ((zset*)sortval->ptr)->dict;
-        dictIterator *di;
-        dictEntry *setele;
-        di = dictGetIterator(set);
-        while((setele = dictNext(di)) != NULL) {
-            vector[j].obj = dictGetEntryKey(setele);
+        iterzset it;
+        rlit tmp;
+        tzsetInitIterator(&it,sortval);
+        vectorlen = tzsetLength(&it);
+        vector = zmalloc(sizeof(redisSortObject)*vectorlen);
+
+        j = 0;
+        while (tzsetNext(&it,&tmp,NULL)) {
+            vector[j].obj = litGetObject(&tmp);
+            incrRefCount(vector[j].obj);
             vector[j].u.score = 0;
             vector[j].u.cmpobj = NULL;
             j++;
         }
-        dictReleaseIterator(di);
+        tzsetClearIterator(&it);
     } else {
-        redisPanic("Unknown type");
+        redisPanic("Bad SORT type");
     }
     redisAssert(j == vectorlen);
 
