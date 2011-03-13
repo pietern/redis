@@ -310,7 +310,7 @@ typedef struct redisLiteral {
  * integer value. */
 #define REDIS_LIT_DIRTY_ROBJ 1
 #define REDIS_LIT_DIRTY_LL 2
-#define REDIS_LIT_VALID_LL 3
+#define REDIS_LIT_VALID_LL 4
 
 typedef struct redisDb {
     dict *dict;                 /* The keyspace for this DB */
