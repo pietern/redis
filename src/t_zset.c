@@ -188,10 +188,6 @@ static int zslValueLteMax(double value, zrangespec *spec) {
     return spec->maxex ? (value < spec->max) : (value <= spec->max);
 }
 
-static int zslValueInRange(double value, zrangespec *spec) {
-    return zslValueGteMin(value,spec) && zslValueLteMax(value,spec);
-}
-
 /* Returns if there is a part of the zset is in range. */
 int zslIsInRange(zskiplist *zsl, zrangespec *range) {
     zskiplistNode *x;
@@ -620,7 +616,7 @@ unsigned char *zzlInsertAt(unsigned char *zl, unsigned char *eptr, robj *ele, do
     unsigned char *sptr;
     char scorebuf[128];
     int scorelen;
-    int offset;
+    size_t offset;
 
     redisAssert(ele->encoding == REDIS_ENCODING_RAW);
     scorelen = d2string(scorebuf,sizeof(scorebuf),score);
