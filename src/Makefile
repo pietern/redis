@@ -24,35 +24,42 @@ ifeq ($(uname_S),Linux)
   endif
 endif
 
+STD= -std=c99 -pedantic
+WARN= -Wall
+OPT= $(OPTIMIZATION)
+
 ifeq ($(uname_S),SunOS)
-  CFLAGS?=-std=c99 -pedantic $(OPTIMIZATION) -Wall -W -D__EXTENSIONS__ -D_XPG6
-  CCLINK?=-ldl -lnsl -lsocket -lm -lpthread
-  DEBUG?=-g -ggdb
+  R_CFLAGS= $(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) -D__EXTENSIONS__ -D_XPG6
+  R_LDFLAGS= $(LDFLAGS)
+  R_LIBS= $(LIBS) -ldl -lnsl -lsocket -lm -lpthread
+  DEBUG= -g -ggdb
 else
-  CFLAGS?=-std=c99 -pedantic $(OPTIMIZATION) -Wall -W $(ARCH) $(PROF)
-  CCLINK?=-lm -pthread
-  DEBUG?=-g -rdynamic -ggdb
+  R_CFLAGS= $(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS)
+  R_LDFLAGS= $(LDFLAGS)
+  R_LIBS= $(LIBS) -lm -pthread
+  DEBUG= -g -rdynamic -ggdb
 endif
 
 ifeq ($(USE_TCMALLOC),yes)
   ALLOC_DEP=
-  ALLOC_LINK=-ltcmalloc
-  ALLOC_FLAGS=-DUSE_TCMALLOC
+  R_CFLAGS+= -DUSE_TCMALLOC
+  R_LIBS+= -ltcmalloc
 endif
 
 ifeq ($(USE_TCMALLOC_MINIMAL),yes)
   ALLOC_DEP=
-  ALLOC_LINK=-ltcmalloc_minimal
-  ALLOC_FLAGS=-DUSE_TCMALLOC
+  R_CFLAGS+= -DUSE_TCMALLOC
+  R_LIBS+= -ltcmalloc_minimal
 endif
 
 ifeq ($(USE_JEMALLOC),yes)
   ALLOC_DEP=../deps/jemalloc/lib/libjemalloc.a
-  ALLOC_LINK=$(ALLOC_DEP) -ldl
-  ALLOC_FLAGS=-DUSE_JEMALLOC -I../deps/jemalloc/include
+  R_CFLAGS+= -DUSE_JEMALLOC -I../deps/jemalloc/include
+  R_LIBS+= $(ALLOC_DEP) -ldl
 endif
 
-CCOPT= $(CFLAGS) $(ARCH) $(PROF)
+R_CC=$(QUIET_CC)$(CC) $(R_CFLAGS)
+R_LD=$(QUIET_LINK)$(CC) $(R_LDFLAGS)
 
 PREFIX= /usr/local
 INSTALL_BIN= $(PREFIX)/bin
@@ -150,47 +157,45 @@ zmalloc.o: zmalloc.c config.h zmalloc.h
 
 dependencies:
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)hiredis$(ENDCOLOR)
-	@cd ../deps/hiredis && $(MAKE) static ARCH="$(ARCH)"
+	@cd ../deps/hiredis && $(MAKE) static
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)linenoise$(ENDCOLOR)
-	@cd ../deps/linenoise && $(MAKE) ARCH="$(ARCH)"
+	@cd ../deps/linenoise && $(MAKE)
 
 ../deps/jemalloc/lib/libjemalloc.a:
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)jemalloc$(ENDCOLOR)
 	@cd ../deps/jemalloc && ./configure $(JEMALLOC_CFLAGS) --with-jemalloc-prefix=je_ --enable-cc-silence && $(MAKE) lib/libjemalloc.a
 
 redis-benchmark.o:
-	$(QUIET_CC)$(CC) -c $(CFLAGS) -I../deps/hiredis $(DEBUG) $(COMPILE_TIME) $<
+	$(R_CC) -c -I../deps/hiredis $(DEBUG) $<
 
 redis-benchmark: dependencies $(BENCHOBJ)
-	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)hiredis$(ENDCOLOR)
-	@cd ../deps/hiredis && $(MAKE) static ARCH="$(ARCH)"
-	$(QUIET_LINK)$(CC) -o $(BENCHPRGNAME) $(CCOPT) $(DEBUG) $(BENCHOBJ) ../deps/hiredis/libhiredis.a $(CCLINK) $(ALLOC_LINK)
+	$(R_LD) -o $(BENCHPRGNAME) $(BENCHOBJ) ../deps/hiredis/libhiredis.a $(R_LIBS)
 
 redis-cli.o:
-	$(QUIET_CC)$(CC) -c $(CFLAGS) -I../deps/hiredis -I../deps/linenoise $(DEBUG) $(COMPILE_TIME) $<
+	$(R_CC) -c -I../deps/hiredis -I../deps/linenoise $<
 
 redis-cli: dependencies $(CLIOBJ)
-	$(QUIET_LINK)$(CC) -o $(CLIPRGNAME) $(CCOPT) $(DEBUG) $(CLIOBJ) ../deps/hiredis/libhiredis.a ../deps/linenoise/linenoise.o $(CCLINK) $(ALLOC_LINK)
+	$(R_LD) -o $(CLIPRGNAME) $(CLIOBJ) ../deps/hiredis/libhiredis.a ../deps/linenoise/linenoise.o $(R_LIBS)
 
 redis-check-dump.o:
-	$(QUIET_CC)$(CC) -c $(CFLAGS) $(DEBUG) $(COMPILE_TIME) $<
+	$(R_CC) -c $<
 
 redis-check-dump: $(CHECKDUMPOBJ)
-	$(QUIET_LINK)$(CC) -o $(CHECKDUMPPRGNAME) $(CCOPT) $(DEBUG) $(CHECKDUMPOBJ) $(CCLINK)
+	$(R_LD) -o $(CHECKDUMPPRGNAME) $(CHECKDUMPOBJ) $(R_LIBS)
 
 redis-check-aof.o:
-	$(QUIET_CC)$(CC) -c $(CFLAGS) $(DEBUG) $(COMPILE_TIME) $<
+	$(R_CC) -c $<
 
 redis-check-aof: $(CHECKAOFOBJ)
-	$(QUIET_LINK)$(CC) -o $(CHECKAOFPRGNAME) $(CCOPT) $(DEBUG) $(CHECKAOFOBJ) $(CCLINK)
+	$(R_LD) -o $(CHECKAOFPRGNAME) $(CHECKAOFOBJ) $(R_LIBS)
 
 redis-server: $(OBJ)
-	$(QUIET_LINK)$(CC) -o $(PRGNAME) $(CCOPT) $(DEBUG) $(OBJ) $(CCLINK) $(ALLOC_LINK)
+	$(R_LD) -o $(PRGNAME) $(OBJ) $(R_LIBS)
 
 # Because the jemalloc.h header is generated as a part of the jemalloc build
 # process, building it should complete before building any other object.
 %.o: %.c $(ALLOC_DEP)
-	$(QUIET_CC)$(CC) -c $(CFLAGS) $(ALLOC_FLAGS) $(DEBUG) $(COMPILE_TIME) $<
+	$(R_CC) -c $<
 
 clean:
 	rm -rf $(PRGNAME) $(BENCHPRGNAME) $(CLIPRGNAME) $(CHECKDUMPPRGNAME) $(CHECKAOFPRGNAME) *.o *.gcda *.gcno *.gcov
