@@ -171,11 +171,17 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
         freeClient(slave);
         return;
     }
-    if ((nwritten = write(fd,buf,buflen)) == -1) {
-        redisLog(REDIS_VERBOSE,"Write error sending DB to slave: %s",
-            strerror(errno));
-        freeClient(slave);
-        return;
+
+    nwritten = write(fd,buf,buflen);
+    if (nwritten == -1) {
+        if (errno == EAGAIN) {
+            nwritten = 0;
+        } else {
+            redisLog(REDIS_VERBOSE,"Write error sending DB to slave: %s",
+                    strerror(errno));
+            freeClient(slave);
+            return;
+        }
     }
     slave->repldboff += nwritten;
     if (slave->repldboff == slave->repldbsize) {
